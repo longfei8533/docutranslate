@@ -103,6 +103,7 @@ class AiTranslator(Translator[T]):
         """
         glossary_stats: Optional[Dict[str, Any]] = None
         translation_stats: Optional[Dict[str, Any]] = None
+        review_stats: Optional[Dict[str, Any]] = None
 
         if self.glossary_agent:
             glossary_stats = self.glossary_agent.get_full_stats()
@@ -110,19 +111,24 @@ class AiTranslator(Translator[T]):
         if hasattr(self, 'translate_agent') and self.translate_agent:
             translation_stats = self.translate_agent.get_full_stats()
 
+        if hasattr(self, 'review_agent') and self.review_agent:
+            review_stats = self.review_agent.get_full_stats()
+
         # 计算汇总统计
-        total_stats = self._calculate_total_stats(glossary_stats, translation_stats)
+        total_stats = self._calculate_total_stats(glossary_stats, translation_stats, review_stats)
 
         return {
             "glossary": glossary_stats,
             "translation": translation_stats,
+            "review": review_stats,
             "total": total_stats
         }
 
     def _calculate_total_stats(
         self,
         glossary_stats: Optional[Dict[str, Any]],
-        translation_stats: Optional[Dict[str, Any]]
+        translation_stats: Optional[Dict[str, Any]],
+        review_stats: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """
         计算汇总统计信息。
@@ -159,6 +165,15 @@ class AiTranslator(Translator[T]):
             total_tokens += translation_stats.get("total_tokens", 0)
             total_requests += translation_stats.get("request_count", 0)
             total_unresolved += translation_stats.get("unresolved_errors", 0)
+
+        if review_stats:
+            total_input += review_stats.get("input_tokens", 0)
+            total_cached += review_stats.get("cached_tokens", 0)
+            total_output += review_stats.get("output_tokens", 0)
+            total_reasoning += review_stats.get("reasoning_tokens", 0)
+            total_tokens += review_stats.get("total_tokens", 0)
+            total_requests += review_stats.get("request_count", 0)
+            total_unresolved += review_stats.get("unresolved_errors", 0)
 
         total_error_rate = total_unresolved / total_requests if total_requests > 0 else 0.0
 

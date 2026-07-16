@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: MPL-2.0
 
 import asyncio
+import inspect
 import itertools
 import json
 import logging
@@ -319,6 +320,7 @@ class TokenCounter:
 PreSendHandlerType = Callable[[str, str], tuple[str, str]]
 ResultHandlerType = Callable[[str, str, logging.Logger], Any]
 ErrorResultHandlerType = Callable[[str, logging.Logger], Any]
+CompletionCallbackType = Callable[[int, str, Any, Any], Any]
 
 # _CJK_PATTERN = re.compile(r'[\u4e00-\u9fff\u3040-\u30ff\uac00-\ud7af]')
 # 扩展正则范围，包含：
@@ -828,6 +830,7 @@ class Agent:
             pre_send_handler: PreSendHandlerType = None,
             result_handler: ResultHandlerType = None,
             error_result_handler: ErrorResultHandlerType = None,
+            completion_callback: CompletionCallbackType = None,
     ) -> list[Any]:
         max_concurrent = (
             self.max_concurrent if max_concurrent is None else max_concurrent
@@ -863,7 +866,7 @@ class Agent:
         async with httpx.AsyncClient(
                 trust_env=False, mounts=proxies, verify=False, limits=limits
         ) as client:
-            async def send_with_semaphore(p_text: str):
+            async def send_with_semaphore(index: int, p_text: str):
                 async with semaphore:
                     # 注意：我们在 semaphore 内部调用 send_async
                     # send_async 内部会调用 rate_limiter.acquire_async
@@ -877,6 +880,10 @@ class Agent:
                         result_handler=result_handler,
                         error_result_handler=error_result_handler,
                     )
+                    if completion_callback:
+                        callback_result = completion_callback(index, p_text, result, client)
+                        if inspect.isawaitable(callback_result):
+                            await callback_result
                     nonlocal count
                     count += 1
                     self.logger.info(f"协程-已完成{count}/{total}")
@@ -885,8 +892,8 @@ class Agent:
                         self.progress_callback(count, total)
                     return result
 
-            for p_text in prompts:
-                task = asyncio.create_task(send_with_semaphore(p_text))
+            for index, p_text in enumerate(prompts):
+                task = asyncio.create_task(send_with_semaphore(index, p_text))
                 tasks.append(task)
 
             results = await asyncio.gather(*tasks, return_exceptions=False)
@@ -1241,7 +1248,9 @@ class Agent:
             count: PromptsCounter,
             pre_send_handler,
             result_handler,
-            error_result_handler
+            error_result_handler,
+            index: int,
+            completion_callback: CompletionCallbackType,
     ) -> Any:
         # 该方法在 ThreadPoolExecutor 中运行
         result = self.send(
@@ -1253,6 +1262,8 @@ class Agent:
             result_handler=result_handler,
             error_result_handler=error_result_handler,
         )
+        if completion_callback:
+            completion_callback(index, prompt, result, client)
         count.add()
         return result
 
@@ -1264,6 +1275,7 @@ class Agent:
             pre_send_handler: PreSendHandlerType = None,
             result_handler: ResultHandlerType = None,
             error_result_handler: ErrorResultHandlerType = None,
+            completion_callback: CompletionCallbackType = None,
     ) -> list[Any]:
         rpm_info = f", RPM:{self.rate_limiter.rpm}" if self.rate_limiter.rpm else ""
         tpm_info = f", TPM:{self.rate_limiter.tpm}" if self.rate_limiter.tpm else ""
@@ -1290,6 +1302,8 @@ class Agent:
         pre_send_handlers = itertools.repeat(pre_send_handler, len(prompts))
         result_handlers = itertools.repeat(result_handler, len(prompts))
         error_result_handlers = itertools.repeat(error_result_handler, len(prompts))
+        indices = range(len(prompts))
+        completion_callbacks = itertools.repeat(completion_callback, len(prompts))
         limits = httpx.Limits(
             max_connections=self.max_concurrent * 2,
             max_keepalive_connections=self.max_concurrent,
@@ -1311,6 +1325,8 @@ class Agent:
                     pre_send_handlers,
                     result_handlers,
                     error_result_handlers,
+                    indices,
+                    completion_callbacks,
                 )
                 output_list = list(results_iterator)
 

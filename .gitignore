@@ -6,6 +6,12 @@ dist/
 wheels/
 *.egg-info
 tests/
+!tests/
+tests/*
+!tests/test_docx_review_comments.py
+!tests/test_docx_review_config.py
+!tests/test_segments_review.py
+!tests/test_translation_review_agent.py
 tests/resource/
 tests/test_data/
 htmlcov/

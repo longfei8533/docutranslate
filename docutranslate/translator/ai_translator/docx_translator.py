@@ -1,6 +1,9 @@
 # SPDX-FileCopyrightText: 2025 QinHan
 # SPDX-License-Identifier: MPL-2.0
 import asyncio
+import posixpath
+import re
+import zipfile
 from collections import defaultdict
 from copy import deepcopy
 from dataclasses import dataclass
@@ -8,6 +11,7 @@ from io import BytesIO
 from typing import Self, Literal, List, Dict, Any, Tuple, Optional
 
 import docx
+from lxml import etree
 from docx.document import Document as DocumentObject
 from docx.opc.part import Part
 from docx.oxml import OxmlElement
@@ -19,6 +23,7 @@ from docx.text.run import Run
 from docx.table import _Cell, Table
 
 from docutranslate.agents.segments_agent import SegmentsTranslateAgentConfig, SegmentsTranslateAgent
+from docutranslate.agents.translation_review_agent import TranslationReviewAgent
 from docutranslate.ir.document import Document
 from docutranslate.translator.ai_translator.base import AiTranslatorConfig, AiTranslator
 
@@ -35,6 +40,9 @@ SIGNIFICANT_STYLES = frozenset([
     qn('w:em'),  # 强调标记 (着重号)
     qn('w:vertAlign'),  # 上标/下标
 ])
+
+PACKAGE_REL_NS = "http://schemas.openxmlformats.org/package/2006/relationships"
+COMMENTS_REL_TYPE = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments"
 
 
 def is_image_run(run: Run) -> bool:
@@ -76,6 +84,7 @@ class DocxTranslatorConfig(AiTranslatorConfig):
     insert_mode: Literal["replace", "append", "prepend"] = "replace"
     separator: str = "\n"
     office_password: Optional[str] = None
+    translation_review_enable: bool = False
 
 
 # ---------------- 主类 ----------------
@@ -97,6 +106,8 @@ class DocxTranslator(AiTranslator):
         super().__init__(config=config)
         self.chunk_size = config.chunk_size
         self.translate_agent = None
+        self.review_agent = None
+        self.translation_review_enable = config.translation_review_enable
         self.total_chunks = 0
         glossary_dict = self.glossary.glossary_dict if self.glossary else None
         if not self.skip_translate:
@@ -108,7 +119,11 @@ class DocxTranslator(AiTranslator):
                     percent = 30 + int((current / total) * 60)
                     self.progress_tracker.update(
                         percent=percent,
-                        message=f"正在翻译 ({current}/{total})"
+                        message=(
+                            f"正在翻译并审校 ({current}/{total})"
+                            if self.translation_review_enable
+                            else f"正在翻译 ({current}/{total})"
+                        )
                     )
 
             agent_config = SegmentsTranslateAgentConfig(
@@ -125,6 +140,13 @@ class DocxTranslator(AiTranslator):
                 progress_callback=progress_callback,
             )
             self.translate_agent = SegmentsTranslateAgent(agent_config)
+            if self.translation_review_enable:
+                self.review_agent = TranslationReviewAgent(
+                    agent_config,
+                    to_lang=config.to_lang,
+                    custom_prompt=config.custom_prompt,
+                    glossary_dict=glossary_dict,
+                )
         self.insert_mode = config.insert_mode
         self.separator = config.separator
         self.office_password = config.office_password
@@ -323,10 +345,11 @@ class DocxTranslator(AiTranslator):
 
         return doc, elements, texts
 
-    def _apply_translation(self, element_info: Dict[str, Any], final_text: str):
+    def _apply_translation(self, element_info: Dict[str, Any], final_text: str) -> Run | None:
         if element_info["type"] == "text_runs":
             runs = element_info["runs"]
-            if not runs: return
+            if not runs:
+                return None
 
             first_real_run_index = -1
             for i, run in enumerate(runs):
@@ -338,7 +361,7 @@ class DocxTranslator(AiTranslator):
 
             if first_real_run_index == -1:
                 self.logger.warning(f"无法应用翻译 '{final_text}'，因为找不到有效的run。")
-                return
+                return None
 
             for i in range(first_real_run_index + 1, len(runs)):
                 run = runs[i]
@@ -349,6 +372,8 @@ class DocxTranslator(AiTranslator):
                     except ValueError:
                         self.logger.debug(f"尝试删除一个不存在的run元素。这通常是安全的。")
                         pass
+            return runs[first_real_run_index]
+        return None
 
     def _prune_unwanted_elements_from_copy(self, p_element: OxmlElement):
         """
@@ -461,17 +486,80 @@ class DocxTranslator(AiTranslator):
             if run_to_remove.getparent() is not None:
                 p_element.remove(run_to_remove)
 
+    @staticmethod
+    def _ensure_story_comment_relationships(content: bytes) -> bytes:
+        """Add a comments relationship to every Word story part containing comment anchors."""
+        source = BytesIO(content)
+        output = BytesIO()
+        with zipfile.ZipFile(source, "r") as zin:
+            names = set(zin.namelist())
+            overrides: Dict[str, bytes] = {}
+            for part_name in sorted(names):
+                if not part_name.startswith("word/") or not part_name.endswith(".xml"):
+                    continue
+                if part_name == "word/comments.xml":
+                    continue
+                part_bytes = zin.read(part_name)
+                if b"commentReference" not in part_bytes:
+                    continue
+
+                directory, filename = posixpath.split(part_name)
+                rels_name = posixpath.join(directory, "_rels", f"{filename}.rels")
+                if rels_name in names:
+                    rels_root = etree.fromstring(zin.read(rels_name))
+                else:
+                    rels_root = etree.Element(
+                        f"{{{PACKAGE_REL_NS}}}Relationships",
+                        nsmap={None: PACKAGE_REL_NS},
+                    )
+
+                relationships = rels_root.findall(f"{{{PACKAGE_REL_NS}}}Relationship")
+                if any(rel.get("Type") == COMMENTS_REL_TYPE for rel in relationships):
+                    continue
+
+                numeric_ids = []
+                for relationship in relationships:
+                    match = re.fullmatch(r"rId(\d+)", relationship.get("Id", ""))
+                    if match:
+                        numeric_ids.append(int(match.group(1)))
+                relationship = etree.SubElement(
+                    rels_root, f"{{{PACKAGE_REL_NS}}}Relationship"
+                )
+                relationship.set("Id", f"rId{max(numeric_ids, default=0) + 1}")
+                relationship.set("Type", COMMENTS_REL_TYPE)
+                relationship.set("Target", "comments.xml")
+                overrides[rels_name] = etree.tostring(
+                    rels_root,
+                    xml_declaration=True,
+                    encoding="UTF-8",
+                    standalone="yes",
+                )
+
+            if not overrides:
+                return content
+
+            with zipfile.ZipFile(output, "w", zipfile.ZIP_DEFLATED) as zout:
+                for info in zin.infolist():
+                    zout.writestr(info, overrides.get(info.filename, zin.read(info.filename)))
+                for rels_name, rels_bytes in overrides.items():
+                    if rels_name not in names:
+                        zout.writestr(rels_name, rels_bytes)
+        return output.getvalue()
+
     def _after_translate(self, doc: DocumentObject, elements: List[Dict[str, Any]], translated: List[str],
-                         originals: List[str]) -> bytes:
+                         originals: List[str], reviews: Dict[int, str] | None = None) -> bytes:
         if len(elements) != len(translated):
             self.logger.error(
                 f"翻译数量不匹配！原文: {len(originals)}, 译文: {len(translated)}. 将只处理公共部分。")
             min_len = min(len(elements), len(translated), len(originals))
             elements, translated, originals = elements[:min_len], translated[:min_len], originals[:min_len]
 
+        translated_anchor_runs: Dict[int, Run] = {}
         if self.insert_mode == "replace":
-            for info, trans in zip(elements, translated):
-                self._apply_translation(info, trans)
+            for index, (info, trans) in enumerate(zip(elements, translated)):
+                anchor_run = self._apply_translation(info, trans)
+                if anchor_run is not None:
+                    translated_anchor_runs[index] = anchor_run
         else:
             paragraph_segments = defaultdict(list)
             for i, info in enumerate(elements):
@@ -551,9 +639,11 @@ class DocxTranslator(AiTranslator):
                             runs_from_copy.append(new_run)
 
                     if runs_from_copy:
-                        self._apply_translation({
+                        anchor_run = self._apply_translation({
                             "type": "text_runs", "runs": runs_from_copy, "paragraph": translated_paragraph_obj
                         }, translation)
+                        if anchor_run is not None:
+                            translated_anchor_runs[element_index] = anchor_run
 
                 # ================= 插入逻辑分支 =================
                 if use_soft_break:
@@ -616,9 +706,24 @@ class DocxTranslator(AiTranslator):
                         if separator_p_element is not None:
                             translated_p_element.addnext(separator_p_element)
 
+        for segment_index, comment_text in sorted((reviews or {}).items()):
+            anchor_run = translated_anchor_runs.get(segment_index)
+            if anchor_run is None or anchor_run.element.getparent() is None:
+                self.logger.warning(f"无法为 segment {segment_index} 插入 AI Review 评论：译文锚点不存在。")
+                continue
+            try:
+                doc.add_comment(
+                    runs=anchor_run,
+                    text=comment_text,
+                    author="AI Review",
+                    initials="AI",
+                )
+            except Exception as exc:
+                self.logger.warning(f"无法为 segment {segment_index} 插入 AI Review 评论: {exc!r}")
+
         doc_output_stream = BytesIO()
         doc.save(doc_output_stream)
-        return doc_output_stream.getvalue()
+        return self._ensure_story_comment_relationships(doc_output_stream.getvalue())
 
     def translate(self, document: Document) -> Self:
         doc, elements, originals = self._pre_translate(document)
@@ -633,10 +738,18 @@ class DocxTranslator(AiTranslator):
                 self.glossary.update(glossary_dict_gen)
             if self.translate_agent and self.glossary:
                 self.translate_agent.update_glossary_dict(self.glossary.glossary_dict)
+            if self.review_agent and self.glossary:
+                self.review_agent.glossary_dict = self.glossary.glossary_dict
 
-        translated = self.translate_agent.send_segments(originals,
-                                                        self.chunk_size) if self.translate_agent else originals
-        document.content = self._after_translate(doc, elements, translated, originals)
+        reviews: Dict[int, str] = {}
+        if self.translate_agent and self.review_agent:
+            translated, reviews = self.translate_agent.send_segments_with_review(
+                originals, self.chunk_size, self.review_agent
+            )
+        else:
+            translated = self.translate_agent.send_segments(originals,
+                                                            self.chunk_size) if self.translate_agent else originals
+        document.content = self._after_translate(doc, elements, translated, originals, reviews)
         return self
 
     async def translate_async(self, document: Document) -> Self:
@@ -652,8 +765,18 @@ class DocxTranslator(AiTranslator):
                 self.glossary.update(glossary_dict_gen)
             if self.translate_agent and self.glossary:
                 self.translate_agent.update_glossary_dict(self.glossary.glossary_dict)
+            if self.review_agent and self.glossary:
+                self.review_agent.glossary_dict = self.glossary.glossary_dict
 
-        translated = await self.translate_agent.send_segments_async(originals,
-                                                                    self.chunk_size) if self.translate_agent else originals
-        document.content = await asyncio.to_thread(self._after_translate, doc, elements, translated, originals)
+        reviews: Dict[int, str] = {}
+        if self.translate_agent and self.review_agent:
+            translated, reviews = await self.translate_agent.send_segments_with_review_async(
+                originals, self.chunk_size, self.review_agent
+            )
+        else:
+            translated = await self.translate_agent.send_segments_async(originals,
+                                                                        self.chunk_size) if self.translate_agent else originals
+        document.content = await asyncio.to_thread(
+            self._after_translate, doc, elements, translated, originals, reviews
+        )
         return self

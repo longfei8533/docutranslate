@@ -7,12 +7,14 @@ import re
 from dataclasses import dataclass
 from json import JSONDecodeError
 from logging import Logger
+from threading import Lock
 
 from json_repair import json_repair
 
 from docutranslate.agents import AgentConfig, Agent
 from docutranslate.agents.agent import PartialAgentResultError, AgentResultError
 from docutranslate.glossary.glossary import Glossary
+from docutranslate.agents.translation_review_agent import TranslationReviewAgent
 from docutranslate.utils.json_utils import segments2json_chunks, fix_json_string, parse_json_response
 
 
@@ -335,6 +337,80 @@ class SegmentsTranslateAgent(Agent):
         result.extend(ls[last_end:])
         return result
 
+    @staticmethod
+    def _expanded_to_original_map(
+        original_count: int,
+        expanded_count: int,
+        merged_indices_list: list[tuple[int, int]],
+    ) -> dict[str, int]:
+        split_ranges = {start: end for start, end in merged_indices_list}
+        mapping: dict[str, int] = {}
+        expanded_index = 0
+        for original_index in range(original_count):
+            end = split_ranges.get(expanded_index, expanded_index + 1)
+            for index in range(expanded_index, min(end, expanded_count)):
+                mapping[str(index)] = original_index
+            expanded_index = end
+        return mapping
+
+    @classmethod
+    def _merge_review_comments(
+        cls,
+        review_chunks: dict[int, dict[str, str]],
+        original_count: int,
+        expanded_count: int,
+        merged_indices_list: list[tuple[int, int]],
+    ) -> dict[int, str]:
+        expanded_map = cls._expanded_to_original_map(
+            original_count, expanded_count, merged_indices_list
+        )
+        grouped: dict[int, list[str]] = {}
+        for chunk_index in sorted(review_chunks):
+            for expanded_id, comment in review_chunks[chunk_index].items():
+                original_index = expanded_map.get(str(expanded_id))
+                if original_index is None or not comment:
+                    continue
+                items = grouped.setdefault(original_index, [])
+                if comment not in items:
+                    items.append(comment)
+        return {index: "\n\n".join(items) for index, items in grouped.items()}
+
+    def send_segments_with_review(
+        self,
+        segments: list[str],
+        chunk_size: int,
+        review_agent: TranslationReviewAgent,
+    ) -> tuple[list[str], dict[int, str]]:
+        indexed_originals, chunks, merged_indices_list = segments2json_chunks(segments, chunk_size)
+        prompts = [generate_prompt(json.dumps(chunk, ensure_ascii=False, indent=0), self.to_lang) for chunk in chunks]
+        review_agent.prepare_batch(len(chunks), self.rate_limiter)
+        review_chunks: dict[int, dict[str, str]] = {}
+        review_lock = Lock()
+
+        def review_completed_chunk(index, _prompt, translated_chunk, client):
+            if not isinstance(translated_chunk, dict):
+                return
+            try:
+                comments = review_agent.review_chunk(client, chunks[index], translated_chunk)
+                with review_lock:
+                    review_chunks[index] = comments
+            except Exception as exc:
+                self.logger.warning(f"chunk {index} 审校失败，继续生成译文: {exc!r}")
+
+        translated_chunks = super().send_prompts(
+            prompts=prompts,
+            json_format=self.force_json,
+            pre_send_handler=self._pre_send_handler,
+            result_handler=self._result_handler,
+            error_result_handler=self._error_result_handler,
+            completion_callback=review_completed_chunk,
+        )
+        translated = self._rebuild_segments(indexed_originals, translated_chunks, merged_indices_list)
+        reviews = self._merge_review_comments(
+            review_chunks, len(segments), len(indexed_originals), merged_indices_list
+        )
+        return translated, reviews
+
     async def send_segments_async(self, segments: list[str], chunk_size: int) -> list[str]:
         indexed_originals, chunks, merged_indices_list = await asyncio.to_thread(segments2json_chunks, segments,
                                                                                  chunk_size)
@@ -373,6 +449,67 @@ class SegmentsTranslateAgent(Agent):
 
         result.extend(ls[last_end:])
         return result
+
+    @staticmethod
+    def _rebuild_segments(
+        indexed_originals: dict[str, str],
+        translated_chunks: list[dict[str, str]],
+        merged_indices_list: list[tuple[int, int]],
+    ) -> list[str]:
+        indexed_translated = indexed_originals.copy()
+        for chunk in translated_chunks:
+            if not isinstance(chunk, dict):
+                continue
+            for key, value in chunk.items():
+                if key in indexed_translated:
+                    indexed_translated[key] = value
+
+        result: list[str] = []
+        last_end = 0
+        values = list(indexed_translated.values())
+        for start, end in merged_indices_list:
+            result.extend(values[last_end:start])
+            result.append("".join(map(str, values[start:end])))
+            last_end = end
+        result.extend(values[last_end:])
+        return result
+
+    async def send_segments_with_review_async(
+        self,
+        segments: list[str],
+        chunk_size: int,
+        review_agent: TranslationReviewAgent,
+    ) -> tuple[list[str], dict[int, str]]:
+        indexed_originals, chunks, merged_indices_list = await asyncio.to_thread(
+            segments2json_chunks, segments, chunk_size
+        )
+        prompts = [generate_prompt(json.dumps(chunk, ensure_ascii=False, indent=0), self.to_lang) for chunk in chunks]
+        review_agent.prepare_batch(len(chunks), self.rate_limiter)
+        review_chunks: dict[int, dict[str, str]] = {}
+
+        async def review_completed_chunk(index, _prompt, translated_chunk, client):
+            if not isinstance(translated_chunk, dict):
+                return
+            try:
+                review_chunks[index] = await review_agent.review_chunk_async(
+                    client, chunks[index], translated_chunk
+                )
+            except Exception as exc:
+                self.logger.warning(f"chunk {index} 审校失败，继续生成译文: {exc!r}")
+
+        translated_chunks = await super().send_prompts_async(
+            prompts=prompts,
+            force_json=self.force_json,
+            pre_send_handler=self._pre_send_handler,
+            result_handler=self._result_handler,
+            error_result_handler=self._error_result_handler,
+            completion_callback=review_completed_chunk,
+        )
+        translated = self._rebuild_segments(indexed_originals, translated_chunks, merged_indices_list)
+        reviews = self._merge_review_comments(
+            review_chunks, len(segments), len(indexed_originals), merged_indices_list
+        )
+        return translated, reviews
 
     def update_glossary_dict(self, update_dict: dict | None):
         if self.glossary_dict is None:

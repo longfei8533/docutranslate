@@ -306,6 +306,7 @@ class UniversalParamsMixin(BaseModel):
 
     # Docx/Xlsx 密码相关
     office_password: Optional[str] = None
+    translation_review_enable: Optional[bool] = None
 
     # Json 相关
     json_paths: Optional[List[str]] = None
@@ -498,6 +499,10 @@ class DocxWorkflowParams(BaseWorkflowParams):
         default=None,
         description="用于解密加密文件的密码。如果文件未加密，此参数将被忽略。",
         examples=[None, "mypassword123"],
+    )
+    translation_review_enable: bool = Field(
+        default=False,
+        description="是否在每个翻译分块返回后使用同一 LLM 进行对照审校，并将问题作为 AI Review 评论写入 DOCX。",
     )
 
 

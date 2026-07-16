@@ -9,7 +9,6 @@
                     :enginList="enginList"
                     :showMineruToken="showMineruToken"
                     :showIdentityOption="showIdentityOption"
-                    :version="version"
                     @update:showMineruToken="val => showMineruToken = val" />
             </div>
 
@@ -174,7 +173,6 @@ provide('closePreview', closePreview);
 provide('saveDefaultWorkflows', saveDefaultWorkflows);
 
 // ===== Local State =====
-const version = ref("");
 const enginList = ref([]);
 const showMineruToken = ref(false);
 const showIdentityOption = ref(true);
@@ -195,11 +193,9 @@ onMounted(async () => {
 
     // Backend Metadata
     try {
-        const [metaRes, enginRes, paramsRes] = await Promise.all([
-            fetch("/service/meta"), fetch('/service/engin-list'), fetch("/service/default-params")
+        const [enginRes, paramsRes] = await Promise.all([
+            fetch('/service/engin-list'), fetch("/service/default-params")
         ]);
-        const meta = await metaRes.json();
-        version.value = meta.version;
         enginList.value = await enginRes.json();
         const paramsData = await paramsRes.json();
         Object.assign(defaultParams, paramsData);

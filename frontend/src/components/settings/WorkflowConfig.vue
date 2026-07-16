@@ -62,6 +62,18 @@
                      v-html="t(currentWorkflowConfig.separatorHelpKey || 'separatorHelp')"></div>
             </div>
 
+            <!-- DOCX AI Translation Review -->
+            <div class="mb-3" v-if="form.workflow_type === 'docx'">
+                <Toggle
+                    v-model="workflowParams.docx.translation_review_enable"
+                    :label="t('docxTranslationReviewLabel')"
+                    @update:modelValue="saveWorkflowParam('translation_review_enable')"
+                />
+                <div class="text-sm text-gray-500 dark:text-gray-400 mt-1">
+                    {{ t('docxTranslationReviewHelp') }}
+                </div>
+            </div>
+
             <!-- DOCX Password -->
             <div class="mb-3" v-if="form.workflow_type === 'docx'">
                 <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{{ t('docxPasswordLabel') }}</label>

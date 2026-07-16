@@ -147,7 +147,7 @@ export function useSettings() {
     const workflowParams = reactive({
         txt: {insert_mode: 'replace', separator: '\\n', segment_mode: 'line'},
         xlsx: {insert_mode: 'replace', separator: '\\n', translate_regions: '', office_password: ''},
-        docx: {insert_mode: 'replace', separator: '', office_password: ''},
+        docx: {insert_mode: 'replace', separator: '', office_password: '', translation_review_enable: false},
         srt: {insert_mode: 'replace', separator: '\\n'},
         epub: {insert_mode: 'replace', separator: ''},
         html: {insert_mode: 'replace', separator: ''},
@@ -246,6 +246,7 @@ export function useSettings() {
         workflowParams.xlsx.translate_regions = storage.get('translator_xlsx_translate_regions', '');
         // Load office_password for docx and xlsx
         workflowParams.docx.office_password = storage.get('translator_docx_office_password', '');
+        workflowParams.docx.translation_review_enable = storage.getBool('translator_docx_translation_review_enable', false);
         workflowParams.xlsx.office_password = storage.get('translator_xlsx_office_password', '');
         workflowParams.json.json_paths = storage.get('translator_json_paths', '');
     };

@@ -37,7 +37,6 @@ export function useI18n() {
             i18nData.value = {
                 pageTitle: "DocuTranslate",
                 tutorialBtn: "教程",
-                projectContributeBtn: "项目协作",
                 workflowTitle: "选择工作流",
                 autoWorkflowLabel: "自动选择工作流",
                 workflowOptionPptx: "PPTX 演示文稿",
