@@ -40,26 +40,67 @@ export function useTasks(settings, glossary, i18n) {
 
     const tasks = ref([]);
     const runningCount = ref(0);
+    const batchDownloadBusy = ref(false);
 
     // Pending queue for batch processing
     const pendingQueue = [];
 
-    const hasPendingTasks = computed(() =>
-        tasks.value.some(task => task.file && !task.isTranslating && !task.isFinished)
+    const releaseBatchSlot = (task) => {
+        if (!task.batchSlotActive) return;
+        task.batchSlotActive = false;
+        runningCount.value = Math.max(0, runningCount.value - 1);
+        startNextPendingTask();
+    };
+
+    const unresolvedErrors = (task) => Number(task.statistics?.total?.unresolved_errors || 0);
+    const isCompleteSuccess = (task) => Boolean(
+        task.isFinished && task.downloads && !task.errorFlag && unresolvedErrors(task) === 0
     );
+    const activeTasks = computed(() => tasks.value.filter(task => !isCompleteSuccess(task)));
+    const completedTasks = computed(() => tasks.value.filter(isCompleteSuccess));
+    const hasPendingTasks = computed(() => activeTasks.value.some(
+        task => task.file && !task.isTranslating && !task.isFinished
+    ));
+    const hasSelectedPendingTasks = computed(() => activeTasks.value.some(
+        task => task.selected && task.file && !task.isTranslating && !task.isFinished
+    ));
+    const hasSelectedCompletedTasks = computed(() => completedTasks.value.some(task => task.selected));
+
+    const makeTask = (overrides = {}) => reactive({
+        uiId: 'card_' + Math.random().toString(36).substring(2, 9),
+        backendId: null,
+        file: null,
+        fileName: '',
+        logs: '',
+        statusMessage: '',
+        statusClass: 'text-muted',
+        isTranslating: false,
+        isFinished: false,
+        isProcessing: false,
+        validationError: false,
+        downloads: null,
+        attachment: null,
+        initializing: false,
+        isDragOver: false,
+        progressPercent: 0,
+        detectedWorkflow: null,
+        statistics: null,
+        selected: false,
+        expanded: false,
+        phase: 'pending',
+        errorFlag: false,
+        startTime: 0,
+        endTime: 0,
+        ...overrides,
+    });
 
     // ===== Task Creation =====
     const createNewTask = (backendId = null) => {
-        const uiId = 'card_' + Math.random().toString(36).substring(2, 9);
-        const task = reactive({
-            uiId, backendId, file: null, fileName: '', logs: '', statusMessage: '',
-            statusClass: 'text-muted', isTranslating: false, isFinished: false, isProcessing: false,
-            validationError: false, downloads: null, attachment: null, initializing: false, isDragOver: false,
-            progressPercent: 0, detectedWorkflow: null, statistics: null
-        });
+        const task = makeTask({ backendId });
         tasks.value.unshift(task);
         if (backendId) {
             task.isTranslating = true;
+            task.phase = 'running';
             pollStatus(task);
         }
         return task;
@@ -83,14 +124,16 @@ export function useTasks(settings, glossary, i18n) {
         saveActiveTasks();
     };
 
-    const clearAllTasks = async () => {
+    const clearAllTasks = async (group = 'all') => {
         if (!confirm(t('confirmClearAllTasks'))) return;
-        for (const task of [...tasks.value]) {
+        const targets = group === 'completed' ? completedTasks.value : (group === 'active' ? activeTasks.value : tasks.value);
+        for (const task of [...targets]) {
             if (task.backendId) try {
                 await fetch(`/service/release/${task.backendId}`, {method: 'POST'});
             } catch (e) {}
         }
-        tasks.value = [];
+        const targetIds = new Set(targets.map(task => task.uiId));
+        tasks.value = tasks.value.filter(task => !targetIds.has(task.uiId));
         saveActiveTasks();
     };
 
@@ -105,14 +148,30 @@ export function useTasks(settings, glossary, i18n) {
 
         const ext = f.name.split('.').pop().toLowerCase();
         const newWorkflow = default_workflows[ext] || 'markdown_based';
-        form.workflow_type = newWorkflow;
         task.detectedWorkflow = newWorkflow;
-        saveSetting('translator_last_workflow', newWorkflow);
+        task.phase = 'pending';
 
         if (e.target) e.target.value = '';
     };
 
     const handleTaskFileDrop = (e, task) => handleTaskFileSelect(e, task);
+
+    const addFiles = (fileList) => {
+        Array.from(fileList || []).forEach(file => {
+            const ext = file.name.split('.').pop().toLowerCase();
+            const task = makeTask({
+                file,
+                fileName: file.name,
+                detectedWorkflow: default_workflows[ext] || 'markdown_based',
+            });
+            tasks.value.push(task);
+        });
+    };
+
+    const handleFilesSelect = (e) => {
+        addFiles(e.target?.files || e.dataTransfer?.files);
+        if (e.target) e.target.value = '';
+    };
 
     const triggerFileInput = (uiId) => {
         const el = document.getElementById('fileInput-' + uiId);
@@ -120,31 +179,14 @@ export function useTasks(settings, glossary, i18n) {
     };
 
     const selectTaskWorkflow = (task) => {
-        if (task.detectedWorkflow) {
-            form.workflow_type = task.detectedWorkflow;
-            saveSetting('translator_last_workflow', task.detectedWorkflow);
-        }
+        task.expanded = !task.expanded;
     };
 
     // ===== Folder Upload =====
     const handleFolderSelect = (e) => {
         const files = Array.from(e.target.files);
         if (files.length === 0) return;
-        files.forEach(f => {
-            const task = reactive({
-                uiId: 'card_' + Math.random().toString(36).substring(2, 9),
-                backendId: null, file: f, fileName: f.name, logs: '', statusMessage: '',
-                statusClass: 'text-muted', isTranslating: false, isFinished: false, isProcessing: false,
-                validationError: false, downloads: null, attachment: null, initializing: false, isDragOver: false,
-                progressPercent: 0, detectedWorkflow: null
-            });
-            tasks.value.unshift(task);
-            const ext = f.name.split('.').pop().toLowerCase();
-            const newWorkflow = default_workflows[ext] || 'markdown_based';
-            form.workflow_type = newWorkflow;
-            task.detectedWorkflow = newWorkflow;
-            saveSetting('translator_last_workflow', newWorkflow);
-        });
+        addFiles(files);
         e.target.value = '';
     };
 
@@ -154,18 +196,26 @@ export function useTasks(settings, glossary, i18n) {
         while (pendingQueue.length > 0 && runningCount.value < maxConcurrent) {
             const task = pendingQueue.shift();
             if (task.file && !task.isTranslating && !task.isFinished) {
+                task.batchSlotActive = true;
                 runningCount.value++;
-                toggleTaskState(task, errors).finally(() => { startNextPendingTask(); });
+                toggleTaskState(task, errors).finally(() => {
+                    // A successful submission keeps its slot until polling reports
+                    // completion. Validation and other early exits release it here.
+                    if (!task.isTranslating) releaseBatchSlot(task);
+                });
             }
         }
     };
 
-    const runAllPendingTasks = () => {
-        const pending = tasks.value.filter(t => t.file && !t.isTranslating && !t.isFinished);
+    const runAllPendingTasks = (selectedOnly = true) => {
+        const pending = activeTasks.value.filter(t =>
+            (!selectedOnly || t.selected) && t.file && !t.isTranslating && !t.isFinished
+        );
         pendingQueue.length = 0;
         pending.forEach((task, i) => {
             task.queuePosition = i + 1;
             task.queueTotal = pending.length;
+            task.phase = 'queued';
             pendingQueue.push(task);
         });
         startNextPendingTask();
@@ -335,11 +385,12 @@ export function useTasks(settings, glossary, i18n) {
             if (task.backendId) {
                 try { await fetch(`/service/cancel/${task.backendId}`, {method: 'POST'}); } catch (e) {}
             }
-            runningCount.value = Math.max(0, runningCount.value - 1);
             task.isTranslating = false;
-            task.isFinished = false;
+            task.isFinished = true;
             task.statusMessage = t('taskCardStatusCancelled');
             task.statusClass = 'text-warning';
+            task.phase = 'cancelled';
+            releaseBatchSlot(task);
             return;
         }
 
@@ -358,6 +409,13 @@ export function useTasks(settings, glossary, i18n) {
             task.isFinished = false;
             task.logs = '';
             task.downloads = null;
+            task.attachment = null;
+            task.statistics = null;
+            task.progressPercent = 0;
+            task.startTime = 0;
+            task.endTime = 0;
+            task.errorFlag = false;
+            task.phase = 'pending';
             await toggleTaskState(task, errors);
             return;
         }
@@ -376,6 +434,7 @@ export function useTasks(settings, glossary, i18n) {
         }
 
         task.initializing = true;
+        task.phase = 'initializing';
         try {
             const savedWorkflow = form.workflow_type;
             if (task.detectedWorkflow) {
@@ -394,6 +453,10 @@ export function useTasks(settings, glossary, i18n) {
                 task.backendId = data.task_id;
                 task.isTranslating = true;
                 task.initializing = false;
+                task.phase = 'running';
+                task.startTime = Date.now() / 1000;
+                task.queuePosition = null;
+                task.queueTotal = null;
                 saveActiveTasks();
                 pollStatus(task);
                 task.statusMessage = data.message;
@@ -405,7 +468,10 @@ export function useTasks(settings, glossary, i18n) {
             task.statusClass = 'text-danger';
             task.isTranslating = false;
             task.initializing = false;
-            runningCount.value = Math.max(0, runningCount.value - 1);
+            task.isFinished = true;
+            task.errorFlag = true;
+            task.phase = 'failed';
+            releaseBatchSlot(task);
         }
     };
 
@@ -438,9 +504,10 @@ export function useTasks(settings, glossary, i18n) {
                         task.isProcessing = false;
                         task.statusClass = 'text-danger';
                         task.statusMessage = t('status_taskNotFound');
-                        const savedIds = JSON.parse(localStorage.getItem('active_task_ids') || '[]');
-                        const newIds = savedIds.filter(id => id !== task.backendId);
-                        localStorage.setItem('active_task_ids', JSON.stringify(newIds));
+                        task.isFinished = true;
+                        task.errorFlag = true;
+                        task.phase = 'expired';
+                        releaseBatchSlot(task);
                         return;
                     }
                     return;
@@ -450,6 +517,9 @@ export function useTasks(settings, glossary, i18n) {
                 task.statusMessage = d.status_message;
                 task.isProcessing = d.is_processing;
                 task.progressPercent = d.progress_percent || 0;
+                task.startTime = d.task_start_time || task.startTime;
+                task.endTime = d.task_end_time || task.endTime;
+                task.errorFlag = Boolean(d.error_flag);
 
                 if (d.original_filename && !task.fileName) {
                     task.fileName = d.original_filename;
@@ -465,13 +535,20 @@ export function useTasks(settings, glossary, i18n) {
                     task.isTranslating = false;
                     task.isFinished = true;
                     task.isProcessing = false;
-                    runningCount.value = Math.max(0, runningCount.value - 1);
+                    releaseBatchSlot(task);
                     if (d.download_ready && !d.error_flag) {
                         task.downloads = d.downloads || {};
                         task.attachment = d.attachment || {};
-                        task.statusClass = 'text-success';
+                        if (unresolvedErrors(task) === 0) {
+                            task.statusClass = 'text-success';
+                            task.phase = 'completed';
+                        } else {
+                            task.statusClass = 'text-warning';
+                            task.phase = 'partial';
+                        }
                     } else {
                         task.statusClass = 'text-danger';
+                        task.phase = d.error_flag ? 'failed' : 'cancelled';
                         task.statusMessage = d.error_flag ? (d.status_message || 'Failed') : d.status_message;
                     }
                 }
@@ -500,11 +577,101 @@ export function useTasks(settings, glossary, i18n) {
         });
     };
 
+    const setAllSelected = (group, selected) => {
+        const target = group === 'completed' ? completedTasks.value : activeTasks.value;
+        target.forEach(task => { task.selected = selected; });
+    };
+
+    const removeSelectedTasks = async (group) => {
+        const target = (group === 'completed' ? completedTasks.value : activeTasks.value).filter(task => task.selected);
+        for (const task of [...target]) await removeTask(task);
+    };
+
+    const cancelSelectedTasks = async () => {
+        const target = activeTasks.value.filter(task => task.selected && task.isTranslating);
+        for (const task of target) await toggleTaskState(task, errors);
+    };
+
+    const prepareBatchDownload = async () => {
+        const selected = completedTasks.value.filter(task => task.selected && task.backendId);
+        if (!selected.length || batchDownloadBusy.value) return null;
+
+        batchDownloadBusy.value = true;
+        try {
+            const statuses = await Promise.all(selected.map(async task => {
+                const response = await fetch(`/service/status/${task.backendId}`, {cache: 'no-store'});
+                if (!response.ok) {
+                    const data = await response.json().catch(() => ({}));
+                    throw new Error(formatError(data));
+                }
+                return {task, status: await response.json()};
+            }));
+
+            const fileTypes = new Set();
+            let hasAttachments = false;
+            statuses.forEach(({task, status}) => {
+                task.downloads = status.downloads || {};
+                task.attachment = status.attachment || {};
+                if (status.statistics) task.statistics = status.statistics;
+                Object.keys(task.downloads).forEach(fileType => fileTypes.add(fileType));
+                hasAttachments ||= Object.keys(task.attachment).length > 0;
+            });
+
+            return {fileTypes: [...fileTypes].sort(), hasAttachments};
+        } catch (error) {
+            alert(error.message || t('batchDownloadFailed'));
+            return null;
+        } finally {
+            batchDownloadBusy.value = false;
+        }
+    };
+
+    const downloadSelectedTasks = async ({fileTypes = null, includeAttachments = true} = {}) => {
+        const ids = completedTasks.value.filter(task => task.selected && task.backendId).map(task => task.backendId);
+        if (!ids.length || batchDownloadBusy.value) return false;
+        batchDownloadBusy.value = true;
+        try {
+            const response = await fetch('/service/download-batch', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({
+                    task_ids: ids,
+                    file_types: fileTypes,
+                    include_attachments: includeAttachments,
+                }),
+            });
+            if (!response.ok) {
+                const data = await response.json().catch(() => ({}));
+                throw new Error(formatError(data));
+            }
+            const blob = await response.blob();
+            const url = URL.createObjectURL(blob);
+            const link = document.createElement('a');
+            link.href = url;
+            link.download = 'docutranslate-results.zip';
+            document.body.appendChild(link);
+            link.click();
+            link.remove();
+            URL.revokeObjectURL(url);
+            return true;
+        } catch (error) {
+            alert(error.message || t('batchDownloadFailed'));
+            return false;
+        } finally {
+            batchDownloadBusy.value = false;
+        }
+    };
+
     return {
         tasks,
+        activeTasks,
+        completedTasks,
         runningCount,
+        batchDownloadBusy,
         queue_concurrent,
         hasPendingTasks,
+        hasSelectedPendingTasks,
+        hasSelectedCompletedTasks,
         pendingQueue,
         createNewTask,
         saveActiveTasks,
@@ -512,6 +679,7 @@ export function useTasks(settings, glossary, i18n) {
         clearAllTasks,
         handleTaskFileSelect,
         handleTaskFileDrop,
+        handleFilesSelect,
         triggerFileInput,
         selectTaskWorkflow,
         handleFolderSelect,
@@ -522,6 +690,11 @@ export function useTasks(settings, glossary, i18n) {
         appendLog,
         toggleTaskState,
         pollStatus,
-        copyLog
+        copyLog,
+        setAllSelected,
+        removeSelectedTasks,
+        cancelSelectedTasks,
+        prepareBatchDownload,
+        downloadSelectedTasks,
     };
 }

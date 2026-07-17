@@ -1,49 +1,51 @@
 <template>
 <div id="app-root">
     <div class="main-container">
-        <div class="main-row">
-            <!-- Left: Settings Panel -->
-            <div class="settings-col">
-                <SettingsPanel
-                    :t="t"
-                    :enginList="enginList"
-                    :showMineruToken="showMineruToken"
-                    :showIdentityOption="showIdentityOption"
-                    @update:showMineruToken="val => showMineruToken = val" />
+        <header class="app-header">
+            <div class="app-brand">
+                <img src="/static/favicon.ico" alt="DocuTranslate">
+                <div>
+                    <h1>DocuTranslate</h1>
+                    <span>{{ t('appSubtitle') }}</span>
+                </div>
             </div>
+            <div class="app-header-actions">
+                <button class="header-button" @click="tutorialOpen = true">
+                    <Heroicon name="QuestionMarkCircleIcon" class="w-5 h-5" /> {{ t('tutorialBtn') }}
+                </button>
+                <button class="header-button header-settings-button" @click="settingsOpen = true">
+                    <Heroicon name="Cog6ToothIcon" class="w-5 h-5" /> {{ t('settingsBtn') }}
+                </button>
+            </div>
+        </header>
 
-            <!-- Right: Task Area -->
-            <div class="task-col">
-                <TaskArea
-                    :t="t"
-                    @clearAllTasks="clearAllTasks"
-                    @handleFolderSelect="handleFolderSelect"
-                    @runAllPendingTasks="runAllPendingTasks"
-                    @createNewTask="createNewTask"
-                    @selectTask="selectTaskWorkflow"
-                    @removeTask="removeTask"
-                    @fileSelect="handleTaskFileSelect"
-                    @fileDrop="handleTaskFileDrop"
-                    @triggerFileInput="triggerFileInput"
-                    @copyLog="copyLog"
-                    @openPreview="openPreview"
-                    @printPdf="printPdf"
-                    @toggleTaskState="toggleTaskState" />
+        <div class="app-workspace">
+            <aside class="quick-settings-column">
+                <QuickSettings :t="t" />
+            </aside>
+            <div class="task-manager-column">
+                <TaskArea :t="t" />
             </div>
         </div>
     </div>
 
     <!-- Modals -->
     <GlossaryModal ref="glossaryModalRefLocal" :t="t" />
-    <DefaultWorkflowModal
-        :t="t"
-        @save="saveDefaultWorkflows" />
-    <TutorialModal :t="t" />
     <ContributorsModal :t="t" />
-    <QueueSettingsModal
-        ref="queueSettingsModalRef"
-        :t="t"
-        @save="val => saveSetting('queue_concurrent', val)" />
+    <Modal v-model="settingsOpen" :title="t('settingsModalTitle')" size="xl" :close-on-backdrop="false">
+        <SettingsPanel
+            :t="t"
+            :enginList="enginList"
+            :showMineruToken="showMineruToken"
+            :showIdentityOption="showIdentityOption"
+            @update:showMineruToken="val => showMineruToken = val" />
+        <template #footer>
+            <button class="toolbar-button toolbar-button-primary" @click="settingsOpen = false">{{ t('closeBtn') }}</button>
+        </template>
+    </Modal>
+    <Modal v-model="tutorialOpen" :title="t('tutorialModalTitle')" size="xl">
+        <TutorialContent :t="t" @close="tutorialOpen = false" />
+    </Modal>
 
     <!-- Preview Offcanvas -->
     <PreviewOffcanvas
@@ -59,16 +61,17 @@
 </template>
 
 <script setup>
-import { ref, reactive, computed, onMounted, provide, watch } from 'vue';
-import TutorialModal from './components/modals/TutorialModal.vue';
+import { ref, onMounted, provide, watch } from 'vue';
+import TutorialContent from './components/modals/TutorialContent.vue';
 import ContributorsModal from './components/modals/ContributorsModal.vue';
-import QueueSettingsModal from './components/modals/QueueSettingsModal.vue';
 import GlossaryModal from './components/modals/GlossaryModal.vue';
-import DefaultWorkflowModal from './components/modals/DefaultWorkflowModal.vue';
 import SettingsPanel from './components/settings/SettingsPanel.vue';
+import QuickSettings from './components/settings/QuickSettings.vue';
 import TaskArea from './components/tasks/TaskArea.vue';
 import PreviewOffcanvas from './components/preview/PreviewOffcanvas.vue';
 import BottomControls from './components/layout/BottomControls.vue';
+import Modal from './components/ui/Modal.vue';
+import Heroicon from './components/ui/Heroicon.vue';
 
 // Import composables
 import { useSettings } from './composables/useSettings.js';
@@ -95,9 +98,12 @@ const { currentLang, t, setLanguage, loadI18n } = i18n;
 const { glossaryData, glossaryCount, glossaryModalRef, handleGlossaryFiles, clearGlossary,
         openGlossaryModal, downloadGlossaryTemplate } = glossary;
 
-const { tasks, hasPendingTasks, createNewTask, removeTask, clearAllTasks,
-        handleTaskFileSelect, handleTaskFileDrop, triggerFileInput, selectTaskWorkflow,
-        handleFolderSelect, runAllPendingTasks, toggleTaskState, copyLog, pollStatus } = tasksComposable;
+const { tasks, activeTasks, completedTasks, hasPendingTasks, hasSelectedPendingTasks,
+        hasSelectedCompletedTasks, batchDownloadBusy, createNewTask, removeTask, clearAllTasks,
+        handleTaskFileSelect, handleTaskFileDrop, handleFilesSelect, triggerFileInput, selectTaskWorkflow,
+        handleFolderSelect, runAllPendingTasks, toggleTaskState, copyLog,
+        setAllSelected, removeSelectedTasks, cancelSelectedTasks, prepareBatchDownload,
+        downloadSelectedTasks } = tasksComposable;
 
 const { previewMode, syncScrollEnabled, previewTask, isOpen, previewOffcanvasComponent,
         openPreview, closePreview, setPreviewMode, toggleSyncScroll, printPdf, initSplit } = preview;
@@ -114,15 +120,6 @@ watch(glossaryModalRefLocal, (val) => {
     glossaryModalRef.value = val;
 }, { immediate: true });
 
-// Queue settings modal ref
-const queueSettingsModalRef = ref(null);
-const openQueueSettings = () => {
-    if (queueSettingsModalRef.value) {
-        queueSettingsModalRef.value.show();
-    }
-};
-provide('openQueueSettings', openQueueSettings);
-
 // ===== Provide to child components =====
 provide('form', form);
 provide('workflowParams', workflowParams);
@@ -135,7 +132,12 @@ provide('envForceOverride', envForceOverride);
 provide('glossaryData', glossaryData);
 provide('glossaryCount', glossaryCount);
 provide('tasks', tasks);
+provide('activeTasks', activeTasks);
+provide('completedTasks', completedTasks);
 provide('hasPendingTasks', hasPendingTasks);
+provide('hasSelectedPendingTasks', hasSelectedPendingTasks);
+provide('hasSelectedCompletedTasks', hasSelectedCompletedTasks);
+provide('batchDownloadBusy', batchDownloadBusy);
 provide('previewMode', previewMode);
 provide('syncScrollEnabled', syncScrollEnabled);
 provide('previewTask', previewTask);
@@ -162,12 +164,18 @@ provide('removeTask', removeTask);
 provide('clearAllTasks', clearAllTasks);
 provide('handleTaskFileSelect', handleTaskFileSelect);
 provide('handleTaskFileDrop', handleTaskFileDrop);
+provide('handleFilesSelect', handleFilesSelect);
 provide('triggerFileInput', triggerFileInput);
 provide('selectTaskWorkflow', selectTaskWorkflow);
 provide('handleFolderSelect', handleFolderSelect);
 provide('runAllPendingTasks', runAllPendingTasks);
 provide('toggleTaskState', toggleTaskState);
 provide('copyLog', copyLog);
+provide('setAllSelected', setAllSelected);
+provide('removeSelectedTasks', removeSelectedTasks);
+provide('cancelSelectedTasks', cancelSelectedTasks);
+provide('prepareBatchDownload', prepareBatchDownload);
+provide('downloadSelectedTasks', downloadSelectedTasks);
 provide('openPreview', openPreview);
 provide('closePreview', closePreview);
 provide('saveDefaultWorkflows', saveDefaultWorkflows);
@@ -176,6 +184,12 @@ provide('saveDefaultWorkflows', saveDefaultWorkflows);
 const enginList = ref([]);
 const showMineruToken = ref(false);
 const showIdentityOption = ref(true);
+const settingsOpen = ref(false);
+const tutorialOpen = ref(false);
+
+watch(() => Object.values(errors).some(Boolean), invalid => {
+    if (invalid) settingsOpen.value = true;
+});
 
 // ===== Computed =====
 
@@ -219,18 +233,7 @@ onMounted(async () => {
         } catch (e) {}
     } else {
         const savedIds = JSON.parse(localStorage.getItem('active_task_ids') || '[]');
-        if (savedIds.length) savedIds.forEach(id => {
-            const task = reactive({
-                uiId: 'card_' + Math.random().toString(36).substring(2, 9),
-                backendId: id, file: null, fileName: '', logs: '', statusMessage: '',
-                statusClass: 'text-muted', isTranslating: true, isFinished: false, isProcessing: false,
-                validationError: false, downloads: null, attachment: null, initializing: false, isDragOver: false,
-                progressPercent: 0, detectedWorkflow: null
-            });
-            tasks.value.push(task);
-            pollStatus(task);
-        });
-        else createNewTask();
+        if (savedIds.length) savedIds.forEach(id => createNewTask(id));
     }
 
     // Global resize handler for preview

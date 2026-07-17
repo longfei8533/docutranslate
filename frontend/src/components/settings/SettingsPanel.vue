@@ -1,17 +1,5 @@
 <template>
     <div class="settings-panel">
-        <div class="d-flex justify-content-between align-items-center mb-3">
-            <div class="d-flex align-items-center">
-                <h4 class="mb-0 me-3 fw-bold ml-3 text-lg" :title="t('pageTitle')">DocuTranslate</h4>
-                <div class="btn-group">
-                    <button type="button" class="btn btn-sm btn-outline-info" @click="showTutorial = true">
-                        <Heroicon name="QuestionMarkCircleIcon" class="w-4 h-4 me-1" solid />
-                        <span>{{ t('tutorialBtn') }}</span>
-                    </button>
-                </div>
-            </div>
-        </div>
-
         <form id="translateForm" @submit.prevent>
             <div class="border rounded" style="border-color: var(--bs-border-color);">
 
@@ -27,13 +15,23 @@
                     :t="t" />
 
                 <TranslationSettings
-                    :t="t" />
+                    :t="t" advanced-only />
 
                 <GlossarySettings
-                    :t="t" />
+                    :t="t" advanced-only />
 
             </div>
         </form>
+
+        <div class="mt-4 border rounded p-3">
+            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                {{ t('queueConcurrentLabel') }}
+            </label>
+            <input type="number" v-model.number="queue_concurrent" min="1"
+                   class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded bg-white dark:bg-gray-700"
+                   @change="saveSetting('queue_concurrent', queue_concurrent)">
+            <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">{{ t('queueConcurrentHelp') }}</p>
+        </div>
 
         <!-- Import/Export -->
         <div class="d-flex justify-content-center gap-2 mt-4">
@@ -61,11 +59,6 @@
         </div>
     </div>
 
-    <!-- Tutorial Modal -->
-    <Modal v-model="showTutorial" :title="t('tutorialModalTitle')" size="xl">
-        <TutorialContent :t="t" @close="showTutorial = false" />
-    </Modal>
-
     <!-- Default Workflow Modal -->
     <DefaultWorkflowModal
         ref="defaultWorkflowModal"
@@ -79,8 +72,6 @@ import WorkflowConfig from './WorkflowConfig.vue';
 import AISettings from './AISettings.vue';
 import TranslationSettings from './TranslationSettings.vue';
 import GlossarySettings from './GlossarySettings.vue';
-import Modal from '../ui/Modal.vue';
-import TutorialContent from '../modals/TutorialContent.vue';
 import DefaultWorkflowModal from '../modals/DefaultWorkflowModal.vue';
 import Heroicon from '../ui/Heroicon.vue';
 
@@ -114,9 +105,9 @@ const importConfig = inject('importConfig');
 const saveDefaultWorkflows = inject('saveDefaultWorkflows');
 const webSkipValidation = inject('webSkipValidation');
 const envForceOverride = inject('envForceOverride');
+const queue_concurrent = inject('queue_concurrent');
 
 const configFile = ref(null);
-const showTutorial = ref(false);
 const defaultWorkflowModal = ref(null);
 
 const handleExportConfig = () => {

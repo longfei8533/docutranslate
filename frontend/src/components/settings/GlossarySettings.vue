@@ -7,7 +7,7 @@
                 <span>{{ t('glossaryGenTitle') }}</span>
             </strong>
         </template>
-        <div class="mb-4">
+        <div v-if="!advancedOnly" class="mb-4">
             <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{{ t('glossaryLabel') }}</label>
             <input
                 class="w-full px-3 py-1.5 text-sm border border-gray-300 dark:border-gray-600 rounded bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-primary file:mr-3 file:py-1 file:px-3 file:rounded file:border-0 file:text-sm file:bg-gray-100 file:text-gray-700 dark:file:bg-gray-600 dark:file:text-gray-200"
@@ -283,8 +283,9 @@ import PlatformSelector from '../common/PlatformSelector.vue';
 import SliderControl from '../common/SliderControl.vue';
 import Heroicon from '../ui/Heroicon.vue';
 
-const props = defineProps({
+defineProps({
     t: Function,
+    advancedOnly: Boolean,
 });
 
 // Inject from parent

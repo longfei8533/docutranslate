@@ -1,128 +1,176 @@
 <template>
-    <div class="task-area">
-        <div class="flex justify-between items-center mb-3">
-            <h4 class="m-0 flex items-center gap-2 text-gray-900 dark:text-gray-100">
-                <Heroicon name="ClipboardDocumentListIcon" class="w-5 h-5" />
-                <span>{{ t('taskListTitle') }}</span>
-            </h4>
-            <div class="flex gap-2">
-                <button
-                    v-if="tasks.length > 0"
-                    class="px-3 py-1.5 text-sm border border-danger text-danger rounded hover:bg-danger hover:text-white transition-colors flex items-center gap-2"
-                    @click="handleClearAllTasks">
-                    <Heroicon name="TrashIcon" class="w-4 h-4" />
-                    <span>{{ t('clearAllTasksBtn') }}</span>
-                </button>
-                <input type="file" id="folderInput" ref="folderInput" class="hidden" webkitdirectory directory multiple
-                       @change="handleFolderSelectFn">
-                <button
-                    class="px-3 py-1.5 text-sm border border-primary text-primary rounded hover:bg-primary hover:text-white transition-colors flex items-center gap-2"
-                    @click="$refs.folderInput.click()">
-                    <Heroicon name="FolderOpenIcon" class="w-4 h-4" />
-                    <span>{{ t('importFolderBtn') }}</span>
-                </button>
-                <button
-                    v-if="hasPendingTasks"
-                    class="px-3 py-1.5 text-sm bg-success text-white rounded hover:bg-green-600 transition-colors flex items-center gap-2"
-                    @click="handleRunAllPendingTasks">
-                    <Heroicon name="PlayIcon" class="w-4 h-4" />
-                    <span>{{ t('runAllBtn') }}</span>
-                </button>
-                <button
-                    class="px-3 py-1.5 text-sm bg-primary text-white rounded hover:bg-primary-hover transition-colors flex items-center gap-2"
-                    @click="handleCreateNewTask">
-                    <Heroicon name="PlusIcon" class="w-4 h-4" />
-                    <span>{{ t('newTaskBtn') }}</span>
-                </button>
-                <Tooltip content="设置" placement="top">
-                    <button
-                        type="button"
-                        class="p-2 text-sm border border-primary text-primary rounded hover:bg-primary hover:text-white transition-colors"
-                        @click="handleShowQueueSettings">
-                        <Heroicon name="Cog6ToothIcon" class="w-4 h-4" />
-                    </button>
-                </Tooltip>
+    <main class="task-manager" @dragover.prevent="dragging = true" @dragleave.self="dragging = false" @drop.prevent="onDrop">
+        <input ref="fileInput" type="file" multiple class="hidden" @change="handleFilesSelect">
+        <input ref="folderInput" type="file" class="hidden" webkitdirectory directory multiple @change="handleFolderSelect">
+
+        <div class="task-toolbar">
+            <div>
+                <h2>{{ t('taskManagerTitle') }}</h2>
+                <span>{{ t('taskManagerSummary', {active: activeTasks.length, completed: completedTasks.length}) }}</span>
             </div>
-        </div>
-        <div id="task-container">
-            <div v-if="tasks.length === 0" class="flex flex-col items-center justify-center text-gray-500 dark:text-gray-400 mt-5">
-                <img src="/static/favicon.ico" alt="LOGO" style="width:10%;min-width: 55px; height: auto;">
-                <p class="mt-3">{{ t('noTaskPlaceholder') }}</p>
+            <div class="task-toolbar-actions">
+                <button class="toolbar-button toolbar-button-primary" @click="fileInput.click()">
+                    <Heroicon name="PlusIcon" class="w-4 h-4" /> {{ t('addTasksBtn') }}
+                </button>
+                <button class="toolbar-button" @click="folderInput.click()">
+                    <Heroicon name="FolderOpenIcon" class="w-4 h-4" /> {{ t('importFolderBtn') }}
+                </button>
+                <button class="toolbar-button toolbar-button-success" :disabled="!hasSelectedPendingTasks" @click="runAllPendingTasks(true)">
+                    <Heroicon name="PlayIcon" class="w-4 h-4" /> {{ t('startSelected') }}
+                </button>
+                <button class="toolbar-button" :disabled="!selectedRunning" @click="cancelSelectedTasks">
+                    <Heroicon name="StopIcon" class="w-4 h-4" /> {{ t('cancelSelected') }}
+                </button>
+                <button class="toolbar-button toolbar-button-danger" :disabled="!selectedActive" @click="removeSelectedTasks('active')">
+                    <Heroicon name="TrashIcon" class="w-4 h-4" /> {{ t('removeSelected') }}
+                </button>
             </div>
-            <TaskCard
-                v-for="task in tasks"
-                :key="task.uiId"
-                :t="t"
-                :task="task"
-                @selectTask="handleSelectTask"
-                @removeTask="handleRemoveTask"
-                @fileSelect="handleFileSelect"
-                @fileDrop="handleFileDrop"
-                @triggerFileInput="handleTriggerFileInput"
-                @copyLog="handleCopyLog"
-                @openPreview="handleOpenPreview"
-                @printPdf="handlePrintPdf"
-                @toggleTaskState="handleToggleTaskState" />
         </div>
 
-        <!-- Queue Settings Modal -->
-        <QueueSettingsModal ref="queueSettingsModal" :t="t" @save="val => {}" />
-    </div>
+        <div v-if="dragging" class="task-drop-overlay">
+            <Heroicon name="CloudArrowUpIcon" class="w-10 h-10" />
+            {{ t('dropFilesHere') }}
+        </div>
+
+        <TaskGroup :title="t('activeTasksTitle')" :tasks="activeTasks" group="active" :t="t"
+                   :all-selected="allActiveSelected" @toggle-all="setAllSelected('active', $event)">
+            <TaskCard v-for="task in activeTasks" :key="task.uiId" :task="task" :t="t"
+                      @removeTask="removeTask" @fileSelect="handleTaskFileSelect"
+                      @triggerFileInput="triggerFileInput" @copyLog="copyLog"
+                      @openPreview="openPreview" @printPdf="printPdf" @toggleTaskState="startTask" />
+        </TaskGroup>
+
+        <section class="completed-section">
+            <div class="completed-toolbar">
+                <h3>{{ t('completedTasksTitle') }} <span>{{ completedTasks.length }}</span></h3>
+                <div>
+                    <button class="toolbar-button toolbar-button-primary" :disabled="!completedTasks.length || batchDownloadBusy" @click="openBatchDownload">
+                        <span v-if="batchDownloadBusy" class="task-spinner"></span>
+                        <Heroicon v-else name="ArchiveBoxArrowDownIcon" class="w-4 h-4" /> {{ t('batchDownload') }}
+                    </button>
+                    <button class="toolbar-button toolbar-button-danger" :disabled="!selectedCompleted" @click="removeSelectedTasks('completed')">
+                        <Heroicon name="TrashIcon" class="w-4 h-4" /> {{ t('removeSelected') }}
+                    </button>
+                    <button class="toolbar-button" :disabled="!completedTasks.length" @click="clearAllTasks('completed')">{{ t('clearCompleted') }}</button>
+                </div>
+            </div>
+            <TaskGroup :tasks="completedTasks" group="completed" :t="t" completed
+                       :all-selected="allCompletedSelected" @toggle-all="setAllSelected('completed', $event)">
+                <TaskCard v-for="task in completedTasks" :key="task.uiId" :task="task" :t="t" completed
+                          @removeTask="removeTask" @fileSelect="handleTaskFileSelect"
+                          @triggerFileInput="triggerFileInput" @copyLog="copyLog"
+                          @openPreview="openPreview" @printPdf="printPdf" @toggleTaskState="startTask" />
+            </TaskGroup>
+        </section>
+
+        <Modal v-model="batchDownloadOpen" :title="t('batchDownloadOptionsTitle')" size="md">
+            <p class="batch-download-help">{{ t('batchDownloadOptionsHelp') }}</p>
+            <div v-if="availableBatchTypes.length" class="batch-format-actions">
+                <button type="button" class="batch-format-action" @click="selectedBatchTypes = [...availableBatchTypes]">{{ t('selectAllFormats') }}</button>
+                <button type="button" class="batch-format-action" @click="selectedBatchTypes = []">{{ t('clearFormatSelection') }}</button>
+            </div>
+            <div v-if="availableBatchTypes.length" class="batch-format-list">
+                <label v-for="fileType in availableBatchTypes" :key="fileType" class="batch-format-option"
+                       :class="{'batch-format-option-selected': selectedBatchTypes.includes(fileType)}">
+                    <input type="checkbox" :value="fileType" v-model="selectedBatchTypes">
+                    <span>{{ formatTypeLabel(fileType) }}</span>
+                </label>
+            </div>
+            <div v-else-if="!hasBatchAttachments" class="batch-download-empty">{{ t('noBatchFormatsAvailable') }}</div>
+            <label v-if="hasBatchAttachments" class="batch-format-option batch-attachment-option">
+                <input type="checkbox" v-model="includeBatchAttachments">
+                <span>{{ t('includeAttachments') }}</span>
+            </label>
+            <div v-if="!canConfirmBatchDownload" class="batch-download-warning">{{ t('selectAtLeastOneFormat') }}</div>
+            <template #footer>
+                <div class="batch-download-footer">
+                    <button class="toolbar-button" @click="batchDownloadOpen = false">{{ t('cancelBtn') }}</button>
+                    <button class="toolbar-button toolbar-button-primary" :disabled="!canConfirmBatchDownload || batchDownloadBusy" @click="confirmBatchDownload">
+                        <span v-if="batchDownloadBusy" class="task-spinner"></span>
+                        <Heroicon v-else name="ArchiveBoxArrowDownIcon" class="w-4 h-4" />
+                        {{ t('downloadSelectedFormats') }}
+                    </button>
+                </div>
+            </template>
+        </Modal>
+    </main>
 </template>
 
 <script setup>
-import { ref, inject } from 'vue';
+import { computed, inject, ref } from 'vue';
 import TaskCard from './TaskCard.vue';
-import Tooltip from '../ui/Tooltip.vue';
-import QueueSettingsModal from '../modals/QueueSettingsModal.vue';
+import TaskGroup from './TaskGroup.vue';
 import Heroicon from '../ui/Heroicon.vue';
+import Modal from '../ui/Modal.vue';
 
-defineProps({
-    t: Function,
-});
-
-// Inject from parent
-const tasks = inject('tasks');
-const hasPendingTasks = inject('hasPendingTasks');
+const props = defineProps({t: Function});
+const activeTasks = inject('activeTasks');
+const completedTasks = inject('completedTasks');
+const hasSelectedPendingTasks = inject('hasSelectedPendingTasks');
+const hasSelectedCompletedTasks = inject('hasSelectedCompletedTasks');
+const batchDownloadBusy = inject('batchDownloadBusy');
 const errors = inject('errors');
-const createNewTask = inject('createNewTask');
 const removeTask = inject('removeTask');
 const clearAllTasks = inject('clearAllTasks');
 const handleTaskFileSelect = inject('handleTaskFileSelect');
-const handleTaskFileDrop = inject('handleTaskFileDrop');
+const handleFilesSelect = inject('handleFilesSelect');
+const handleFolderSelect = inject('handleFolderSelect');
 const triggerFileInput = inject('triggerFileInput');
-const selectTaskWorkflow = inject('selectTaskWorkflow');
-const handleFolderSelectFn = inject('handleFolderSelect');
 const runAllPendingTasks = inject('runAllPendingTasks');
 const toggleTaskState = inject('toggleTaskState');
 const copyLog = inject('copyLog');
 const openPreview = inject('openPreview');
 const printPdf = inject('printPdf');
+const setAllSelected = inject('setAllSelected');
+const removeSelectedTasks = inject('removeSelectedTasks');
+const cancelSelectedTasks = inject('cancelSelectedTasks');
+const prepareBatchDownload = inject('prepareBatchDownload');
+const downloadSelectedTasks = inject('downloadSelectedTasks');
 
+const fileInput = ref(null);
 const folderInput = ref(null);
-const queueSettingsModal = ref(null);
-const showQueueSettings = ref(false);
-
-// Inject openQueueSettings from parent
-const openQueueSettings = inject('openQueueSettings');
-
-// Event handlers
-const handleClearAllTasks = () => clearAllTasks();
-const handleCreateNewTask = () => createNewTask();
-const handleRunAllPendingTasks = () => runAllPendingTasks();
-const handleSelectTask = (task) => selectTaskWorkflow(task);
-const handleRemoveTask = (task) => removeTask(task);
-const handleFileSelect = (e, task) => handleTaskFileSelect(e, task);
-const handleFileDrop = (e, task) => handleTaskFileDrop(e, task);
-const handleTriggerFileInput = (uiId) => triggerFileInput(uiId);
-const handleCopyLog = (e, logs) => copyLog(e, logs);
-const handleOpenPreview = (task) => openPreview(task);
-const handlePrintPdf = (url) => printPdf(url);
-const handleToggleTaskState = (task) => toggleTaskState(task, errors);
-
-const handleShowQueueSettings = () => {
-    if (openQueueSettings) {
-        openQueueSettings();
-    }
+const dragging = ref(false);
+const batchDownloadOpen = ref(false);
+const selectedBatchTypes = ref([]);
+const includeBatchAttachments = ref(true);
+const selectedActive = computed(() => activeTasks.value.some(task => task.selected));
+const selectedRunning = computed(() => activeTasks.value.some(task => task.selected && task.isTranslating));
+const selectedCompleted = computed(() => completedTasks.value.some(task => task.selected));
+const allActiveSelected = computed(() => activeTasks.value.length > 0 && activeTasks.value.every(task => task.selected));
+const allCompletedSelected = computed(() => completedTasks.value.length > 0 && completedTasks.value.every(task => task.selected));
+const selectedCompletedTasks = computed(() => completedTasks.value.filter(task => task.selected));
+const availableBatchTypes = computed(() => [...new Set(
+    selectedCompletedTasks.value.flatMap(task => Object.keys(task.downloads || {}))
+)].sort());
+const hasBatchAttachments = computed(() => selectedCompletedTasks.value.some(
+    task => task.attachment && Object.keys(task.attachment).length > 0
+));
+const canConfirmBatchDownload = computed(() =>
+    selectedBatchTypes.value.length > 0 || (hasBatchAttachments.value && includeBatchAttachments.value)
+);
+const startTask = task => toggleTaskState(task, errors);
+const onDrop = event => {
+    dragging.value = false;
+    handleFilesSelect(event);
+};
+const openBatchDownload = async () => {
+    if (!selectedCompletedTasks.value.length) setAllSelected('completed', true);
+    const options = await prepareBatchDownload();
+    if (!options) return;
+    selectedBatchTypes.value = [...options.fileTypes];
+    includeBatchAttachments.value = options.hasAttachments;
+    batchDownloadOpen.value = true;
+};
+const formatTypeLabel = fileType => {
+    if (fileType === 'markdown_zip') return props.t('downloadMdZip');
+    if (fileType === 'markdown') return props.t('downloadMdEmbedded');
+    return fileType.toUpperCase();
+};
+const confirmBatchDownload = async () => {
+    const downloaded = await downloadSelectedTasks({
+        fileTypes: [...selectedBatchTypes.value],
+        includeAttachments: includeBatchAttachments.value,
+    });
+    if (downloaded) batchDownloadOpen.value = false;
 };
 </script>

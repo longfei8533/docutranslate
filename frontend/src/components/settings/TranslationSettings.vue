@@ -8,7 +8,7 @@
             </strong>
         </template>
 
-        <div class="mb-3">
+        <div v-if="!advancedOnly" class="mb-3">
             <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{{ t('targetLanguageLabel') }}</label>
             <select class="w-full px-3 py-1.5 text-sm border border-gray-300 dark:border-gray-600 rounded bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-primary" v-model="form.to_lang"
                     @change="saveSetting('translator_to_lang', form.to_lang)">
@@ -70,7 +70,7 @@
             </div>
         </div>
 
-        <div class="mb-3">
+        <div v-if="!advancedOnly" class="mb-3">
             <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{{ t('customPromptLabel') }}</label>
             <textarea class="w-full px-3 py-1.5 text-sm border border-gray-300 dark:border-gray-600 rounded bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-primary resize-none" v-model="form.custom_prompt"
                       @change="saveSetting('custom_prompt', form.custom_prompt)" rows="3"
@@ -131,6 +131,7 @@ import Heroicon from '../ui/Heroicon.vue';
 
 const props = defineProps({
     t: Function,
+    advancedOnly: Boolean,
 });
 
 // Collapse state

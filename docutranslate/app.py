@@ -7,8 +7,11 @@ import binascii
 import json
 import logging
 import os
+import re
 import socket
+import tempfile
 import uuid
+import zipfile
 from contextlib import asynccontextmanager, closing
 from pathlib import Path
 from typing import (
@@ -37,6 +40,7 @@ from fastapi.openapi.docs import (
     get_redoc_html,
 )
 from fastapi.responses import HTMLResponse, JSONResponse, FileResponse, Response
+from starlette.background import BackgroundTask
 from fastapi.staticfiles import StaticFiles
 from pydantic import (
     BaseModel,
@@ -151,6 +155,117 @@ DocuTranslate 后端服务 API，提供文档翻译、状态查询、结果下�
 service_router = APIRouter(prefix="/service", tags=["Service API"])
 STATIC_DIR = resource_path("static")
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+
+
+class BatchDownloadRequest(BaseModel):
+    task_ids: List[str] = Field(min_length=1, max_length=200)
+    file_types: Optional[List[str]] = Field(default=None, max_length=50)
+    include_attachments: bool = True
+
+
+def _safe_archive_name(value: str, fallback: str) -> str:
+    """Return a portable ZIP path component without traversal characters."""
+    name = Path(value or "").name.strip()
+    name = re.sub(r"[^\w.()\-\u4e00-\u9fff]+", "_", name, flags=re.UNICODE)
+    return name.strip("._") or fallback
+
+
+def _unique_archive_name(filename: str, used_names: set[str]) -> str:
+    """Return a unique, flat ZIP member name while preserving its extension."""
+    candidate = filename
+    stem = Path(filename).stem
+    suffix = Path(filename).suffix
+    counter = 2
+    while candidate.casefold() in used_names:
+        candidate = f"{stem}-{counter}{suffix}"
+        counter += 1
+    used_names.add(candidate.casefold())
+    return candidate
+
+
+def _create_batch_download_archive(
+        task_ids: List[str],
+        file_types: Optional[List[str]] = None,
+        include_attachments: bool = True,
+) -> str:
+    """Validate completed tasks and package every result and attachment."""
+    invalid_tasks = []
+    task_entries = []
+    seen_ids = set()
+    selected_types = set(file_types) if file_types is not None else None
+
+    for task_id in task_ids:
+        if task_id in seen_ids:
+            continue
+        seen_ids.add(task_id)
+        state = translation_service.get_task_state(task_id)
+        stats = (state or {}).get("statistics") or {}
+        total_stats = stats.get("total") or {}
+        unresolved_errors = total_stats.get("unresolved_errors", 0) or 0
+        files = (state or {}).get("downloadable_files") or {}
+        if (
+            not state
+            or state.get("is_processing")
+            or state.get("error_flag")
+            or not state.get("download_ready")
+            or unresolved_errors != 0
+            or not files
+        ):
+            invalid_tasks.append(task_id)
+            continue
+
+        selected_files = {
+            file_type: info for file_type, info in files.items()
+            if selected_types is None or file_type in selected_types
+        }
+        selected_attachments = (state.get("attachment_files") or {}) if include_attachments else {}
+        missing = [
+            info.get("path")
+            for info in [*selected_files.values(), *selected_attachments.values()]
+            if not info.get("path") or not os.path.isfile(info.get("path"))
+        ]
+        if missing:
+            invalid_tasks.append(task_id)
+            continue
+        task_entries.append((task_id, state, selected_files, selected_attachments))
+
+    if invalid_tasks and not task_entries:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "message": "所选任务未完全成功、已过期或结果文件丢失。",
+                "task_ids": invalid_tasks,
+            },
+        )
+    if not task_entries:
+        raise HTTPException(status_code=400, detail="没有可下载的任务。")
+
+    archive = tempfile.NamedTemporaryFile(prefix="docutranslate-batch-", suffix=".zip", delete=False)
+    archive.close()
+    try:
+        files_written = 0
+        used_names = set()
+        with zipfile.ZipFile(archive.name, "w", compression=zipfile.ZIP_DEFLATED) as zip_file:
+            for task_id, state, selected_files, selected_attachments in task_entries:
+                for file_type, info in selected_files.items():
+                    filename = _safe_archive_name(info.get("filename"), f"result.{file_type}")
+                    archive_name = _unique_archive_name(filename, used_names)
+                    zip_file.write(info["path"], archive_name)
+                    files_written += 1
+                for identifier, info in selected_attachments.items():
+                    filename = _safe_archive_name(info.get("filename"), "attachment")
+                    archive_name = _unique_archive_name(filename, used_names)
+                    zip_file.write(info["path"], archive_name)
+                    files_written += 1
+        if files_written == 0:
+            raise HTTPException(status_code=400, detail="所选任务没有符合条件的下载文件。")
+        return archive.name
+    except Exception:
+        try:
+            os.unlink(archive.name)
+        except OSError:
+            pass
+        raise
 
 
 # ===================================================================
@@ -729,6 +844,30 @@ async def service_download_attachment(
     media_type = "application/octet-stream"
 
     return FileResponse(path=file_path, media_type=media_type, filename=filename)
+
+
+@service_router.post(
+    "/download-batch",
+    summary="批量下载翻译结果",
+    description="将多个完全成功任务的全部结果格式和附件打包为 ZIP。",
+    responses={
+        200: {"description": "成功生成 ZIP 文件。"},
+        409: {"description": "包含未完成、失败、部分成功、过期或文件丢失的任务。"},
+    },
+)
+async def service_download_batch(payload: BatchDownloadRequest):
+    archive_path = await asyncio.to_thread(
+        _create_batch_download_archive,
+        payload.task_ids,
+        payload.file_types,
+        payload.include_attachments,
+    )
+    return FileResponse(
+        path=archive_path,
+        media_type="application/zip",
+        filename="docutranslate-results.zip",
+        background=BackgroundTask(os.unlink, archive_path),
+    )
 
 
 @service_router.get(
