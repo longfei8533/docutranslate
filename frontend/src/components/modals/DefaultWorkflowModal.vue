@@ -78,6 +78,11 @@
 <script setup>
 import { ref, computed, inject } from 'vue';
 import Modal from '../ui/Modal.vue';
+import {
+    WEB_DEFAULT_EXTENSIONS,
+    WEB_DEFAULT_WORKFLOW_MAPPING,
+    WEB_DISABLED_EXTENSIONS,
+} from '../../constants/workflows.js';
 
 const props = defineProps({
     t: Function,
@@ -89,20 +94,7 @@ const emit = defineEmits(['save']);
 const default_workflows = inject('default_workflows');
 const saveDefaultWorkflows = inject('saveDefaultWorkflows');
 
-const DEFAULT_EXTENSIONS = ['pdf','png','jpg','jpeg','gif','bmp','webp','txt','md','docx','doc','xlsx','csv','xls','epub','pptx','ppt','srt','ass','json','html','htm'];
-const DEFAULT_WORKFLOW_MAPPING = {
-    pdf: 'markdown_based', png: 'markdown_based', jpg: 'markdown_based', jpeg: 'markdown_based',
-    gif: 'markdown_based', bmp: 'markdown_based', webp: 'markdown_based',
-    txt: 'txt', md: 'markdown_based',
-    docx: 'docx', doc: 'docx',
-    xlsx: 'xlsx', csv: 'xlsx', xls: 'xlsx',
-    epub: 'epub',
-    pptx: 'pptx', ppt: 'pptx',
-    srt: 'srt', ass: 'ass',
-    json: 'json', html: 'html', htm: 'html'
-};
-
-const ALL_EXTENSIONS = ref([...DEFAULT_EXTENSIONS]);
+const ALL_EXTENSIONS = ref([...WEB_DEFAULT_EXTENSIONS]);
 const workflowDragOver = ref(null);
 const addExtensionError = ref('');
 const draggingExt = ref(null);
@@ -113,10 +105,7 @@ const workflowOptions = [
     { value: 'txt', label: 'TXT' },
     { value: 'docx', label: 'DOCX' },
     { value: 'xlsx', label: 'XLSX' },
-    { value: 'epub', label: 'EPUB' },
     { value: 'pptx', label: 'PPTX' },
-    { value: 'srt', label: 'SRT' },
-    { value: 'ass', label: 'ASS' },
     { value: 'json', label: 'JSON' },
     { value: 'html', label: 'HTML' },
 ];
@@ -126,10 +115,7 @@ const workflowFullLabelKeys = {
     txt: 'workflowOptionTxt',
     docx: 'workflowOptionDocx',
     xlsx: 'workflowOptionXlsx',
-    epub: 'workflowOptionEpub',
     pptx: 'workflowOptionPptx',
-    srt: 'workflowOptionSrt',
-    ass: 'workflowOptionAss',
     json: 'workflowOptionJson',
     html: 'workflowOptionHtml',
 };
@@ -185,6 +171,10 @@ const addExtToWorkflow = (workflow, event) => {
         addExtensionError.value = props.t('addExtensionPlaceholder');
         return;
     }
+    if (WEB_DISABLED_EXTENSIONS.has(raw)) {
+        addExtensionError.value = props.t('webDisabledExtensionConfig');
+        return;
+    }
     if (ALL_EXTENSIONS.value.includes(raw)) {
         addExtensionError.value = props.t('extensionExistsError');
         return;
@@ -199,15 +189,16 @@ const addExtToWorkflow = (workflow, event) => {
 };
 
 const resetDefaultWorkflows = () => {
-    ALL_EXTENSIONS.value = [...DEFAULT_EXTENSIONS];
-    Object.assign(default_workflows, DEFAULT_WORKFLOW_MAPPING);
+    Object.keys(default_workflows).forEach(ext => delete default_workflows[ext]);
+    ALL_EXTENSIONS.value = [...WEB_DEFAULT_EXTENSIONS];
+    Object.assign(default_workflows, WEB_DEFAULT_WORKFLOW_MAPPING);
     saveDefaultWorkflows();
     emit('save');
 };
 
 // Initialize ALL_EXTENSIONS from saved data
 const initFromSaved = () => {
-    const allExts = new Set([...DEFAULT_EXTENSIONS]);
+    const allExts = new Set([...WEB_DEFAULT_EXTENSIONS]);
     if (default_workflows) Object.keys(default_workflows).forEach(ext => allExts.add(ext));
     ALL_EXTENSIONS.value = [...allExts];
 };

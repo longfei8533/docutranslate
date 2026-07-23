@@ -23,11 +23,8 @@
                 <option value="markdown_based">{{ t('workflowOptionMarkdown') }}</option>
                 <option value="docx">{{ t('workflowOptionDocx') }}</option>
                 <option value="xlsx">{{ t('workflowOptionXlsx') }}</option>
-                <option value="epub">{{ t('workflowOptionEpub') }}</option>
                 <option value="txt">{{ t('workflowOptionTxt') }}</option>
                 <option value="pptx">{{ t('workflowOptionPptx') }}</option>
-                <option value="srt">{{ t('workflowOptionSrt') }}</option>
-                <option value="ass">{{ t('workflowOptionAss') }}</option>
                 <option value="json">{{ t('workflowOptionJson') }}</option>
                 <option value="html">{{ t('workflowOptionHtml') }}</option>
             </select>
@@ -391,31 +388,11 @@ const currentWorkflowConfig = computed(() => {
             hasInsertMode: true,
             insertHelpKey: 'insertModeHelpXlsx'
         },
-        'srt': {
-            titleKey: 'srtSettingsTitleText',
-            icon: 'bi-file-text',
-            hasInsertMode: true,
-            insertHelpKey: 'insertModeHelpSrt'
-        },
-        'epub': {
-            titleKey: 'epubSettingsTitleText',
-            icon: 'bi-book',
-            hasInsertMode: true,
-            insertHelpKey: 'insertModeHelpEpub'
-        },
         'html': {
             titleKey: 'htmlSettingsTitleText',
             icon: 'bi-filetype-html',
             hasInsertMode: true,
             insertHelpKey: 'insertModeHelpHtml'
-        },
-        'ass': {
-            titleKey: 'assSettingsTitleText',
-            icon: 'bi-file-easel',
-            hasInsertMode: true,
-            insertHelpKey: 'insertModeHelpAss',
-            separatorHelpKey: 'separatorHelpAss',
-            separatorPlaceholderKey: 'separatorPlaceholderAss'
         },
         'pptx': {
             titleKey: 'pptxSettingsTitleText',

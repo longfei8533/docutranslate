@@ -1,5 +1,6 @@
 import { ref, reactive, computed, nextTick } from 'vue';
 import { emptyToNull } from '../utils/helpers.js';
+import { getFileExtension, isWebDisabledFile } from '../constants/workflows.js';
 
 // 格式化错误信息，处理 FastAPI 422 验证错误等复杂格式
 const formatError = (data) => {
@@ -138,9 +139,24 @@ export function useTasks(settings, glossary, i18n) {
     };
 
     // ===== File Handling =====
+    const notifyDisabledFiles = (files) => {
+        const blocked = Array.from(files || []);
+        if (!blocked.length) return;
+        const formats = [...new Set(blocked.map(file => getFileExtension(file.name)).filter(Boolean))]
+            .map(ext => `.${ext.toUpperCase()}`)
+            .join(', ');
+        alert(t('webDisabledFilesSkipped', {count: blocked.length, formats}));
+    };
+
     const handleTaskFileSelect = (e, task) => {
         const f = e.target.files ? e.target.files[0] : e.dataTransfer.files[0];
         if (!f) return;
+        if (isWebDisabledFile(f)) {
+            notifyDisabledFiles([f]);
+            task.isDragOver = false;
+            if (e.target) e.target.value = '';
+            return;
+        }
         task.file = f;
         task.fileName = f.name;
         task.validationError = false;
@@ -157,7 +173,10 @@ export function useTasks(settings, glossary, i18n) {
     const handleTaskFileDrop = (e, task) => handleTaskFileSelect(e, task);
 
     const addFiles = (fileList) => {
-        Array.from(fileList || []).forEach(file => {
+        const files = Array.from(fileList || []);
+        const blocked = files.filter(isWebDisabledFile);
+        notifyDisabledFiles(blocked);
+        files.filter(file => !isWebDisabledFile(file)).forEach(file => {
             const ext = file.name.split('.').pop().toLowerCase();
             const task = makeTask({
                 file,
@@ -391,6 +410,11 @@ export function useTasks(settings, glossary, i18n) {
             task.statusClass = 'text-warning';
             task.phase = 'cancelled';
             releaseBatchSlot(task);
+            return;
+        }
+
+        if (task.file && isWebDisabledFile(task.file)) {
+            notifyDisabledFiles([task.file]);
             return;
         }
 

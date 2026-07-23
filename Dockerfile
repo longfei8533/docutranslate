@@ -1,10 +1,20 @@
+# 国内镜像默认值可在构建时通过 --build-arg 覆盖
+ARG PYTHON_IMAGE=docker.m.daocloud.io/library/python:3.11-slim
+ARG PYPI_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple
+ARG DEBIAN_MIRROR=https://mirrors.tuna.tsinghua.edu.cn/debian
+
 # 阶段1: 构建阶段
-FROM python:3.11-slim AS builder
+FROM ${PYTHON_IMAGE} AS builder
+
+ARG PYPI_INDEX_URL
 
 ENV UV_HTTP_TIMEOUT=300 \
     UV_COMPILE_BYTECODE=1 \
     UV_LINK_MODE=copy \
-    UV_NO_DEV=1
+    UV_NO_DEV=1 \
+    UV_DEFAULT_INDEX=${PYPI_INDEX_URL} \
+    PIP_INDEX_URL=${PYPI_INDEX_URL} \
+    PIP_DEFAULT_TIMEOUT=300
 
 WORKDIR /app
 
@@ -17,7 +27,9 @@ COPY docutranslate ./docutranslate
 RUN uv venv && uv sync --frozen --extra mcp
 
 # 阶段2: 运行阶段
-FROM python:3.11-slim
+FROM ${PYTHON_IMAGE}
+
+ARG DEBIAN_MIRROR
 
 LABEL authors="xunbu"
 
@@ -27,7 +39,11 @@ ENV PATH="/app/.venv/bin:$PATH" \
 WORKDIR /app
 
 # 只安装运行时必需的系统依赖
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN sed -i \
+        -e "s|http://deb.debian.org/debian|${DEBIAN_MIRROR}|g" \
+        -e "s|https://deb.debian.org/debian|${DEBIAN_MIRROR}|g" \
+        /etc/apt/sources.list.d/debian.sources \
+    && apt-get update && apt-get install -y --no-install-recommends \
     pandoc \
     ca-certificates \
     curl \

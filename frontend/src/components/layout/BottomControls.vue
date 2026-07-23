@@ -13,9 +13,6 @@
             <a class="block px-4 py-2 text-sm hover:bg-gray-100 dark:hover:bg-gray-700"
                :class="currentLang === 'en' ? 'text-primary font-medium' : 'text-gray-700 dark:text-gray-300'"
                href="#" @click.prevent="emit('setLang', 'en')">English</a>
-            <a class="block px-4 py-2 text-sm hover:bg-gray-100 dark:hover:bg-gray-700"
-               :class="currentLang === 'vi' ? 'text-primary font-medium' : 'text-gray-700 dark:text-gray-300'"
-               href="#" @click.prevent="emit('setLang', 'vi')">Tiếng Việt</a>
         </Dropdown>
         <Dropdown>
             <template #trigger>

@@ -1,8 +1,16 @@
 import { ref } from 'vue';
 
+const SUPPORTED_LANGUAGES = ['zh', 'en'];
+
 export function useI18n() {
-    const currentLang = ref(localStorage.getItem('ui_language') || 'zh');
+    const savedLanguage = localStorage.getItem('ui_language');
+    const initialLanguage = SUPPORTED_LANGUAGES.includes(savedLanguage) ? savedLanguage : 'zh';
+    const currentLang = ref(initialLanguage);
     const i18nData = ref({});
+
+    if (savedLanguage !== initialLanguage) {
+        localStorage.setItem('ui_language', initialLanguage);
+    }
 
     const t = (k, params) => {
         let v = i18nData.value[k] || k;
@@ -15,9 +23,11 @@ export function useI18n() {
     };
 
     const setLanguage = async (l) => {
+        if (!SUPPORTED_LANGUAGES.includes(l)) return;
+
         currentLang.value = l;
         localStorage.setItem('ui_language', l);
-        document.documentElement.lang = l === 'zh' ? 'zh-CN' : (l === 'vi' ? 'vi' : 'en');
+        document.documentElement.lang = l === 'zh' ? 'zh-CN' : 'en';
         // Reload i18n data
         try {
             const res = await fetch(`/static/i18n/${l}.json`);

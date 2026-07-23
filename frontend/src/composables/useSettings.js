@@ -1,5 +1,11 @@
 import { reactive, watch, ref } from 'vue';
 import { KNOWN_PLATFORMS } from '../constants/platforms';
+import {
+    WEB_DEFAULT_EXTENSIONS,
+    WEB_DEFAULT_WORKFLOW_MAPPING,
+    WEB_DISABLED_WORKFLOWS,
+    sanitizeWebWorkflowMappings,
+} from '../constants/workflows.js';
 
 // ===== 存储键名常量 =====
 export const STORAGE = {
@@ -124,17 +130,7 @@ export function useSettings() {
     });
 
     // Default workflows per file extension
-    const default_workflows = reactive({
-        pdf: 'markdown_based', png: 'markdown_based', jpg: 'markdown_based', jpeg: 'markdown_based',
-        gif: 'markdown_based', bmp: 'markdown_based', webp: 'markdown_based',
-        txt: 'txt', md: 'markdown_based',
-        docx: 'docx', doc: 'docx',
-        xlsx: 'xlsx', csv: 'xlsx', xls: 'xlsx',
-        epub: 'epub',
-        pptx: 'pptx', ppt: 'pptx',
-        srt: 'srt', ass: 'ass',
-        json: 'json', html: 'html', htm: 'html'
-    });
+    const default_workflows = reactive({...WEB_DEFAULT_WORKFLOW_MAPPING});
 
     const queue_concurrent = ref(3);
 
@@ -148,10 +144,7 @@ export function useSettings() {
         txt: {insert_mode: 'replace', separator: '\\n', segment_mode: 'line'},
         xlsx: {insert_mode: 'replace', separator: '\\n', translate_regions: '', office_password: ''},
         docx: {insert_mode: 'replace', separator: '', office_password: '', translation_review_enable: false},
-        srt: {insert_mode: 'replace', separator: '\\n'},
-        epub: {insert_mode: 'replace', separator: ''},
         html: {insert_mode: 'replace', separator: ''},
-        ass: {insert_mode: 'replace', separator: '\\n'},
         json: {json_paths: ''},
         pptx: {insert_mode: 'replace', separator: '\\n'}
     });
@@ -164,6 +157,10 @@ export function useSettings() {
     // ===== 加载配置 - 拆分为子函数 =====
     const loadMainConfig = (defaults) => {
         form.workflow_type = storage.get(STORAGE.keys.WORKFLOW, 'markdown_based');
+        if (WEB_DISABLED_WORKFLOWS.has(form.workflow_type)) {
+            form.workflow_type = 'markdown_based';
+            storage.set(STORAGE.keys.WORKFLOW, form.workflow_type);
+        }
         form.convert_engine = storage.get(STORAGE.keys.ENGINE, 'mineru');
         const md2docxVal = storage.get(STORAGE.keys.MD2DOCX, 'auto');
         form.md2docx_engine = md2docxVal === 'null' ? null : md2docxVal;
@@ -237,7 +234,7 @@ export function useSettings() {
     };
 
     const loadWorkflowParams = () => {
-        ['txt', 'xlsx', 'docx', 'srt', 'epub', 'html', 'ass', 'pptx'].forEach(t => {
+        ['txt', 'xlsx', 'docx', 'html', 'pptx'].forEach(t => {
             workflowParams[t].insert_mode = storage.get(`translator_${t}_insert_mode`, 'replace');
             if (workflowParams[t].separator !== undefined)
                 workflowParams[t].separator = storage.get(`translator_${t}_separator`, workflowParams[t].separator);
@@ -267,6 +264,10 @@ export function useSettings() {
                 }
             } catch(e) {}
         }
+        const sanitized = sanitizeWebWorkflowMappings(default_workflows);
+        Object.keys(default_workflows).forEach(ext => delete default_workflows[ext]);
+        Object.assign(default_workflows, sanitized);
+        saveDefaultWorkflows();
     };
 
     const loadConfig = (defaults = {}) => {
@@ -434,8 +435,19 @@ export function useSettings() {
                     const data = JSON.parse(ev.target.result);
                     _importingConfig = true;
                     if (data.form) Object.assign(form, data.form);
-                    if (data.workflowParams) Object.assign(workflowParams, data.workflowParams);
-                    if (data.default_workflows) Object.assign(default_workflows, data.default_workflows);
+                    if (WEB_DISABLED_WORKFLOWS.has(form.workflow_type)) {
+                        form.workflow_type = 'markdown_based';
+                    }
+                    if (data.workflowParams) {
+                        Object.entries(data.workflowParams).forEach(([workflow, params]) => {
+                            if (!WEB_DISABLED_WORKFLOWS.has(workflow) && workflowParams[workflow]) {
+                                Object.assign(workflowParams[workflow], params);
+                            }
+                        });
+                    }
+                    if (data.default_workflows) {
+                        Object.assign(default_workflows, sanitizeWebWorkflowMappings(data.default_workflows));
+                    }
                     _importingConfig = false;
                     saveAllSettings();
                     saveDefaultWorkflows();
@@ -451,7 +463,7 @@ export function useSettings() {
     };
 
     // ===== Default Workflow =====
-    const DEFAULT_EXTENSIONS = ['pdf','png','jpg','jpeg','gif','bmp','webp','txt','md','docx','doc','xlsx','csv','xls','epub','pptx','ppt','srt','ass','json','html','htm'];
+    const DEFAULT_EXTENSIONS = WEB_DEFAULT_EXTENSIONS;
 
     const saveDefaultWorkflows = () => {
         localStorage.setItem('default_workflows', JSON.stringify(default_workflows));
