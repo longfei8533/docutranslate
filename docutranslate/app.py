@@ -8,6 +8,7 @@ import json
 import logging
 import os
 import re
+import secrets
 import socket
 import tempfile
 import uuid
@@ -76,6 +77,8 @@ except ImportError:
 
 # --- Shared Translation Service ---
 translation_service: TranslationService = get_translation_service()
+_idempotency_tasks: dict[str, str] = {}
+_service_token = os.environ.get("DOCUTRANSLATE_SERVICE_TOKEN", "").strip()
 
 # --- FastAPI application and router setup ---
 tags_metadata = [
@@ -104,6 +107,7 @@ async def lifespan(app: FastAPI):
     # Initialize the translation service
     translation_service.initialize(httpx_client, app.state.main_event_loop)
     translation_service.clear_all()
+    _idempotency_tasks.clear()
 
     global_logger.propagate = False
     global_logger.setLevel(logging.INFO)
@@ -152,6 +156,21 @@ DocuTranslate 后端服务 API，提供文档翻译、状态查询、结果下�
 """,
     version=__version__,
 )
+
+
+@app.middleware("http")
+async def require_internal_service_token(request: Request, call_next):
+    """Optionally protect service APIs for internal platform integration."""
+    if request.url.path.startswith("/service/") and _service_token:
+        supplied = request.headers.get("x-service-token", "")
+        if not secrets.compare_digest(supplied, _service_token):
+            return JSONResponse(status_code=401, content={"detail": "无效的内部服务凭证"})
+    return await call_next(request)
+
+
+@app.get("/health", include_in_schema=False)
+async def health():
+    return {"status": "healthy", "version": __version__}
 service_router = APIRouter(prefix="/service", tags=["Service API"])
 STATIC_DIR = resource_path("static")
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
@@ -426,10 +445,20 @@ class TranslateServiceRequest(BaseModel):
     },
 )
 async def service_translate(
+        http_request: Request,
         request: TranslateServiceRequest = Body(
             ..., description="翻译任务的详细参数和文件内容。"
         )
 ):
+    idempotency_key = http_request.headers.get("idempotency-key", "").strip()
+    existing_task_id = _idempotency_tasks.get(idempotency_key) if idempotency_key else None
+    if existing_task_id and translation_service.get_task_state(existing_task_id):
+        return JSONResponse(content={
+            "task_started": True,
+            "task_id": existing_task_id,
+            "message": "已返回幂等请求对应的现有任务。",
+            "idempotent_replay": True,
+        })
     task_id = uuid.uuid4().hex[:8]
 
     try:
@@ -444,6 +473,8 @@ async def service_translate(
             file_contents=file_contents,
             original_filename=request.file_name,
         )
+        if idempotency_key:
+            _idempotency_tasks[idempotency_key] = task_id
         return JSONResponse(content=response_data)
     except HTTPException as e:
         if e.status_code == 429:
@@ -488,11 +519,21 @@ async def service_translate(
     },
 )
 async def service_translate_file(
+        request: Request,
         file: UploadFile = File(..., description="要翻译的文件"),
         payload: Json[TranslatePayload] = Form(
             ..., description="包含工作流参数的JSON字符串 (详见接口文档说明)。"
         ),
 ):
+    idempotency_key = request.headers.get("idempotency-key", "").strip()
+    existing_task_id = _idempotency_tasks.get(idempotency_key) if idempotency_key else None
+    if existing_task_id and translation_service.get_task_state(existing_task_id):
+        return JSONResponse(content={
+            "task_started": True,
+            "task_id": existing_task_id,
+            "message": "已返回幂等请求对应的现有任务。",
+            "idempotent_replay": True,
+        })
     task_id = uuid.uuid4().hex[:8]
 
     try:
@@ -507,6 +548,8 @@ async def service_translate_file(
             file_contents=file_contents,
             original_filename=file.filename or "uploaded_file",
         )
+        if idempotency_key:
+            _idempotency_tasks[idempotency_key] = task_id
         return JSONResponse(content=response_data)
     except HTTPException as e:
         if e.status_code == 429:

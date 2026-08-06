@@ -7,6 +7,7 @@ from typing import Self, Tuple, Type
 
 from docutranslate.cacher import md_based_convert_cacher
 from docutranslate.converter.x2md.converter_mineru_deploy import ConverterMineruDeploy, ConverterMineruDeployConfig
+from docutranslate.converter.x2md.converter_pypdf import ConverterPyPdf, ConverterPyPdfConfig
 from docutranslate.exporter.base import ExporterConfig
 from docutranslate.global_values.conditional_import import DOCLING_EXIST
 from docutranslate.glossary.glossary import Glossary
@@ -47,7 +48,8 @@ class MarkdownBasedWorkflow(Workflow[MarkdownBasedWorkflowConfig, Document, Mark
             X2MarkdownConverterConfig]] | None] = {
         "mineru": (ConverterMineru, ConverterMineruConfig),
         "identity": (ConverterIdentity, None),
-        "mineru_deploy": (ConverterMineruDeploy, ConverterMineruDeployConfig)
+        "mineru_deploy": (ConverterMineruDeploy, ConverterMineruDeployConfig),
+        "pypdf": (ConverterPyPdf, ConverterPyPdfConfig),
     }
 
     if DOCLING_EXIST:

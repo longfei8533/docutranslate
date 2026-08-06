@@ -53,16 +53,20 @@ RUN sed -i \
 COPY --from=builder /app/.venv /app/.venv
 COPY --from=builder /app/docutranslate /app/docutranslate
 
-# 创建挂载点
-RUN mkdir -p /app/output
+# 创建非特权运行用户和挂载点
+RUN groupadd --gid 10001 docutranslate \
+    && useradd --uid 10001 --gid 10001 --home-dir /home/docutranslate --create-home --shell /usr/sbin/nologin docutranslate \
+    && mkdir -p /app/output \
+    && chown -R 10001:10001 /app /home/docutranslate
 
 EXPOSE 8010
 
 # 健康检查
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD curl -f http://localhost:${DOCUTRANSLATE_PORT}/service/meta || exit 1
+    CMD curl -f http://localhost:${DOCUTRANSLATE_PORT}/health || exit 1
 
 # 启动命令
+USER 10001:10001
 ENTRYPOINT ["docutranslate", "-i", "--with-mcp"]
 
 # docker build -t xunbu/docutranslate:latest .

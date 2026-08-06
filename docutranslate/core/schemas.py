@@ -273,7 +273,7 @@ class BaseWorkflowParams(BaseModel):
 # 这是必须添加的关键部分，让 Auto 模式能够显式识别这些参数
 class UniversalParamsMixin(BaseModel):
     # Markdown/PDF 相关
-    convert_engine: Optional[Literal["identity", "mineru", "docling", "mineru_deploy"]] = None
+    convert_engine: Optional[Literal["identity", "mineru", "docling", "mineru_deploy", "pypdf"]] = None
     mineru_token: Optional[str] = None
     model_version: Optional[Literal["pipeline", "vlm"]] = None
     formula_ocr: Optional[bool] = None
@@ -323,11 +323,11 @@ class MarkdownWorkflowParams(BaseWorkflowParams):
         ..., description="指定使用基于Markdown的翻译工作流。"
     )
     convert_engine: Literal[
-        "identity", "mineru", "docling", "mineru_deploy"
+        "identity", "mineru", "docling", "mineru_deploy", "pypdf"
     ] = Field(
         CONVERT_ENGINE,
         description="选择将文件解析为markdown的引擎。'mineru_deploy' 适用于本地部署的 MinerU 服务。如果输入文件是.md，此项可为`identity`或不传。",
-        examples=["identity", "mineru", "docling", "mineru_deploy"],
+        examples=["identity", "mineru", "docling", "mineru_deploy", "pypdf"],
     )
     md2docx_engine: Literal["python", "pandoc", "auto"] | None = Field(
         MD2DOCX_ENGINE,

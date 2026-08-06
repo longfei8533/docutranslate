@@ -70,6 +70,7 @@ if DOCLING_EXIST:
     from docutranslate.converter.x2md.converter_docling import ConverterDoclingConfig
 from docutranslate.converter.x2md.converter_mineru import ConverterMineruConfig
 from docutranslate.converter.x2md.converter_mineru_deploy import ConverterMineruDeployConfig
+from docutranslate.converter.x2md.converter_pypdf import ConverterPyPdfConfig
 from docutranslate.exporter.md.md2html_exporter import MD2HTMLExporterConfig
 from docutranslate.exporter.md.md2docx_exporter import MD2DocxExporterConfig
 from docutranslate.exporter.txt.txt2html_exporter import TXT2HTMLExporterConfig
@@ -356,11 +357,11 @@ class TranslationService:
                         print(f"[{task_id}] 复制字段 {field_name}: {type(value).__name__}" +
                               (f" (len={len(value)})" if isinstance(value, str) else ""))
 
-            # 调试日志
+            # Never print token values, prefixes, or raw payloads.
             print(f"[{task_id}] payload_data keys: {sorted(payload_data.keys())}")
             if "mineru_token" in payload_data:
                 token = payload_data["mineru_token"]
-                print(f"[{task_id}] mineru_token in payload_data (length: {len(token)}, starts with: {token[:20] if len(token) > 20 else token}...)")
+                print(f"[{task_id}] mineru_token configured: {bool(token)}")
             if "convert_engine" in payload_data:
                 print(f"[{task_id}] convert_engine: {payload_data['convert_engine']}")
 
@@ -375,12 +376,10 @@ class TranslationService:
 
             try:
                 payload = TypeAdapter(TranslatePayload).validate_python(payload_data)
-                # 验证后再次检查
+                # 验证后仅记录是否配置，绝不记录 token 内容。
                 if hasattr(payload, "mineru_token"):
                     token = payload.mineru_token
-                    print(f"[{task_id}] After validation: mineru_token present (length: {len(token) if token else 0})")
-                    if token:
-                        print(f"[{task_id}] mineru_token starts with: {token[:20] if len(token) > 20 else token}")
+                    print(f"[{task_id}] After validation: mineru_token configured={bool(token)}")
                 if hasattr(payload, "convert_engine"):
                     print(f"[{task_id}] After validation: convert_engine={payload.convert_engine}")
             except Exception as e:
@@ -736,9 +735,7 @@ class TranslationService:
             converter_config = None
             if payload.convert_engine == "mineru":
                 token = payload.mineru_token or ""
-                task_logger.info(f"Creating ConverterMineruConfig with mineru_token (length: {len(token)})")
-                if token:
-                    task_logger.info(f"mineru_token starts with: {token[:20] if len(token) > 20 else token}")
+                task_logger.info("Creating ConverterMineruConfig", extra={"token_configured": bool(token)})
                 converter_config = ConverterMineruConfig(
                     logger=task_logger,
                     mineru_token=token,
@@ -758,6 +755,8 @@ class TranslationService:
                     lang_list=payload.mineru_deploy_lang_list,
                     server_url=payload.mineru_deploy_server_url,
                 )
+            elif payload.convert_engine == "pypdf":
+                converter_config = ConverterPyPdfConfig(logger=task_logger)
             elif payload.convert_engine == "docling" and DOCLING_EXIST:
                 converter_config = ConverterDoclingConfig(
                     logger=task_logger,
