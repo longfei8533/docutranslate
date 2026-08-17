@@ -65,6 +65,7 @@ def _get_formats_info() -> Dict[str, Any]:
         ],
         "output_formats_by_workflow": {
             "markdown_based": ["html", "markdown", "markdown_zip", "docx"],
+            "pdf_native_docx": ["docx"],
             "txt": ["txt"],
             "json": ["json"],
             "xlsx": ["xlsx", "csv", "html"],

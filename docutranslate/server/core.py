@@ -31,6 +31,7 @@ from pydantic import TypeAdapter
 
 from docutranslate import __version__
 from docutranslate.agents.glossary_agent import GlossaryAgentConfig
+from docutranslate.core.factory import create_pdf_native_docx_workflow_from_payload
 from docutranslate.core.schemas import TranslatePayload
 from docutranslate.utils.utils import mask_secrets
 from docutranslate.exporter.md.types import ConvertEngineType
@@ -58,6 +59,7 @@ from docutranslate.workflow.md_based_workflow import (
     MarkdownBasedWorkflow,
     MarkdownBasedWorkflowConfig,
 )
+from docutranslate.workflow.pdf_native_docx_workflow import PdfNativeDocxWorkflow
 from docutranslate.workflow.pptx_workflow import PPTXWorkflow, PPTXWorkflowConfig
 from docutranslate.workflow.srt_workflow import SrtWorkflow, SrtWorkflowConfig
 from docutranslate.workflow.txt_workflow import TXTWorkflow, TXTWorkflowConfig
@@ -99,6 +101,7 @@ MAX_LOG_HISTORY = 200
 # --- Workflow dictionary ---
 WORKFLOW_DICT: Dict[str, Type[Workflow]] = {
     "markdown_based": MarkdownBasedWorkflow,
+    "pdf_native_docx": PdfNativeDocxWorkflow,
     "txt": TXTWorkflow,
     "json": JsonWorkflow,
     "xlsx": XlsxWorkflow,
@@ -689,6 +692,7 @@ class TranslationService:
         """Create workflow instance based on payload type."""
         from docutranslate.core.schemas import (
             MarkdownWorkflowParams,
+            PdfNativeDocxWorkflowParams,
             TextWorkflowParams,
             JsonWorkflowParams,
             XlsxWorkflowParams,
@@ -699,6 +703,15 @@ class TranslationService:
             AssWorkflowParams,
             PPTXWorkflowParams,
         )
+
+        if isinstance(payload, PdfNativeDocxWorkflowParams):
+            task_logger.info("构建 PdfNativeDocxWorkflow 配置。")
+            return create_pdf_native_docx_workflow_from_payload(
+                payload,
+                logger=task_logger,
+                progress_tracker=progress_tracker,
+                glossary_agent_config=build_glossary_agent_config(),
+            )
 
         if isinstance(payload, MarkdownWorkflowParams):
             task_logger.info("构建 MarkdownBasedWorkflow 配置。")
@@ -1223,7 +1236,7 @@ class TranslationService:
                         False,
                     )
             # DocxWorkflow can export docx directly
-            elif isinstance(workflow, DocxWorkflow):
+            elif isinstance(workflow, (DocxWorkflow, PdfNativeDocxWorkflow)):
                 export_map["docx"] = (
                     workflow.export_to_docx,
                     f"{filename_stem}_translated.docx",

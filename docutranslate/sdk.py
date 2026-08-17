@@ -29,6 +29,7 @@ _WORKFLOW_MAPPINGS = {
         "html": ("save_as_html", "html"),
     },
     "docx": {"docx": ("save_as_docx", "docx")},
+    "pdf_native_docx": {"docx": ("save_as_docx", "docx")},
     "xlsx": {"xlsx": ("save_as_xlsx", "xlsx")},
     "pptx": {"pptx": ("save_as_pptx", "pptx")},
     "epub": {"epub": ("save_as_epub", "epub")},
@@ -335,7 +336,7 @@ class Client:
         异步执行翻译任务。
 
         :param file_path: 输入文件路径 (必需)。
-        :param workflow_type: 工作流类型 (auto, docx, markdown_based, xlsx, json, txt)。
+        :param workflow_type: 工作流类型 (auto, docx, markdown_based, pdf_native_docx, xlsx, json, txt)。
         :param skip_translate: 若为 True，仅进行解析/OCR，不调用 LLM 翻译。
         :param concurrent: LLM 请求并发数。
         :param json_paths: [Json专用] JsonPath 列表 (如 '$.data.*')。

@@ -23,6 +23,8 @@ class ConverterMineruDeployConfig(X2MarkdownConverterConfig):
     # 后端引擎选项 (更新适配最新的 MinerU API)
     backend: Literal[
         "pipeline",
+        "vlm-engine",
+        "hybrid-engine",
         "vlm-auto-engine",
         "vlm-http-client",
         "hybrid-auto-engine",

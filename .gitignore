@@ -13,6 +13,7 @@ tests/*
 !tests/test_segments_review.py
 !tests/test_translation_review_agent.py
 !tests/test_batch_download.py
+!tests/test_pdf_native_docx_workflow.py
 tests/resource/
 tests/test_data/
 htmlcov/

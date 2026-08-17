@@ -6,7 +6,7 @@ import logging
 
 from docutranslate.global_values.conditional_import import DOCLING_EXIST
 from docutranslate.agents.glossary_agent import GlossaryAgentConfig
-from docutranslate.core.schemas import TranslatePayload, MarkdownWorkflowParams, TextWorkflowParams, JsonWorkflowParams, \
+from docutranslate.core.schemas import TranslatePayload, MarkdownWorkflowParams, PdfNativeDocxWorkflowParams, TextWorkflowParams, JsonWorkflowParams, \
     XlsxWorkflowParams, DocxWorkflowParams, SrtWorkflowParams, EpubWorkflowParams, HtmlWorkflowParams, \
     AssWorkflowParams, PPTXWorkflowParams
 if DOCLING_EXIST:
@@ -40,10 +40,93 @@ from docutranslate.workflow.epub_workflow import EpubWorkflowConfig, EpubWorkflo
 from docutranslate.workflow.html_workflow import HtmlWorkflowConfig, HtmlWorkflow
 from docutranslate.workflow.json_workflow import JsonWorkflowConfig, JsonWorkflow
 from docutranslate.workflow.md_based_workflow import MarkdownBasedWorkflowConfig, MarkdownBasedWorkflow
+from docutranslate.workflow.pdf_native_docx_workflow import (
+    PdfNativeDocxWorkflow,
+    PdfNativeDocxWorkflowConfig,
+)
 from docutranslate.workflow.pptx_workflow import PPTXWorkflowConfig, PPTXWorkflow
 from docutranslate.workflow.srt_workflow import SrtWorkflowConfig, SrtWorkflow
 from docutranslate.workflow.txt_workflow import TXTWorkflowConfig, TXTWorkflow
 from docutranslate.workflow.xlsx_workflow import XlsxWorkflowConfig, XlsxWorkflow
+
+
+def create_pdf_native_docx_workflow_from_payload(
+    payload: PdfNativeDocxWorkflowParams,
+    *,
+    logger: logging.Logger,
+    progress_tracker=None,
+    glossary_agent_config=None,
+) -> PdfNativeDocxWorkflow:
+    """Build the composite PDF-native-DOCX workflow from a validated payload."""
+    if payload.convert_engine == "mineru":
+        converter_config = ConverterMineruConfig(
+            logger=logger,
+            mineru_token=payload.mineru_token,
+            formula_ocr=payload.formula_ocr,
+            model_version=payload.model_version,
+            language=payload.mineru_language,
+        )
+    else:
+        converter_config = ConverterMineruDeployConfig(
+            logger=logger,
+            base_url=payload.mineru_deploy_base_url,
+            backend=payload.mineru_deploy_backend,
+            parse_method=payload.mineru_deploy_parse_method,
+            formula_enable=payload.mineru_deploy_formula_enable,
+            table_enable=payload.mineru_deploy_table_enable,
+            start_page_id=payload.mineru_deploy_start_page_id,
+            end_page_id=payload.mineru_deploy_end_page_id,
+            lang_list=payload.mineru_deploy_lang_list,
+            server_url=payload.mineru_deploy_server_url,
+        )
+
+    translator_args = payload.model_dump(
+        include={
+            "skip_translate",
+            "base_url",
+            "api_key",
+            "model_id",
+            "to_lang",
+            "custom_prompt",
+            "temperature",
+            "top_p",
+            "thinking",
+            "chunk_size",
+            "concurrent",
+            "insert_mode",
+            "separator",
+            "translation_review_enable",
+            "glossary_dict",
+            "timeout",
+            "retry",
+            "system_proxy_enable",
+            "force_json",
+            "rpm",
+            "tpm",
+            "provider",
+            "extra_body",
+        },
+        exclude_none=True,
+    )
+    translator_args["glossary_generate_enable"] = payload.glossary_generate_enable
+    translator_args["glossary_agent_config"] = glossary_agent_config
+    translator_config = DocxTranslatorConfig(**translator_args)
+    translator_config.progress_tracker = progress_tracker
+    docx_workflow_config = DocxWorkflowConfig(
+        translator_config=translator_config,
+        html_exporter_config=Docx2HTMLExporterConfig(cdn=True),
+        logger=logger,
+        progress_tracker=progress_tracker,
+    )
+    return PdfNativeDocxWorkflow(
+        config=PdfNativeDocxWorkflowConfig(
+            convert_engine=payload.convert_engine,
+            converter_config=converter_config,
+            docx_workflow_config=docx_workflow_config,
+            logger=logger,
+            progress_tracker=progress_tracker,
+        )
+    )
 
 
 def create_workflow_from_payload(payload: TranslatePayload, logger: logging.Logger = None) -> Workflow:
@@ -58,6 +141,13 @@ def create_workflow_from_payload(payload: TranslatePayload, logger: logging.Logg
         if payload.glossary_generate_enable and payload.glossary_agent_config:
             return GlossaryAgentConfig(logger=logger, **payload.glossary_agent_config.model_dump())
         return None
+
+    if isinstance(payload, PdfNativeDocxWorkflowParams):
+        return create_pdf_native_docx_workflow_from_payload(
+            payload,
+            logger=logger,
+            glossary_agent_config=build_glossary_agent_config(),
+        )
 
     # 1. Markdown Based Workflow
     if isinstance(payload, MarkdownWorkflowParams):

@@ -419,7 +419,7 @@ class TranslateServiceRequest(BaseModel):
     description="""
 接收一个包含文件内容（Base64编码）和工作流参数的JSON请求，启动一个后台翻译任务。
 
-- **工作流选择**: `payload.workflow_type` 决定任务类型（如 `markdown_based`, `txt`, `json`, `xlsx`, `docx`, `srt`, `epub`, `html`, `ass`, `pptx`, `auto`）。
+- **工作流选择**: `payload.workflow_type` 决定任务类型（如 `markdown_based`, `pdf_native_docx`, `txt`, `json`, `xlsx`, `docx`, `srt`, `epub`, `html`, `ass`, `pptx`, `auto`）。
 - **Auto 模式**: 当设置为 `auto` 时，后端将根据 `file_name` 的扩展名自动选择最合适的工作流。
 - **动态参数**: 根据所选工作流，API需要不同的参数集。请参考下面的Schema或示例。
 - **异步处理**: 此端点会立即返回任务ID，客户端需轮询状态接口获取进度。
@@ -1100,7 +1100,7 @@ async def service_flat_translate(
         api_key: str = Form("xx", description="API Key (默认xx)"),
         to_lang: str = Form("中文", description="目标翻译语言"),
         workflow_type: str = Form("auto",
-                                  description="工作流类型: auto, markdown_based, txt, json, xlsx, docx, srt, epub, html, ass, pptx"),
+                                  description="工作流类型: auto, markdown_based, pdf_native_docx, txt, json, xlsx, docx, srt, epub, html, ass, pptx"),
         skip_translate: bool = Form(False, description="是否跳过翻译仅进行格式解析"),
         concurrent: int = Form(default_params["concurrent"], description="并发请求数"),
         chunk_size: int = Form(default_params["chunk_size"], description="文本分块大小"),

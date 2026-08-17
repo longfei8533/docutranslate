@@ -45,7 +45,7 @@ from docutranslate.config import (
 
 # --- 公共类型定义 ---
 WorkflowType = Literal[
-    "auto", "markdown_based", "txt", "json", "xlsx", "docx",
+    "auto", "markdown_based", "pdf_native_docx", "txt", "json", "xlsx", "docx",
     "srt", "epub", "html", "ass", "pptx"
 ]
 InsertMode = Literal["replace", "append", "prepend"]
@@ -372,6 +372,8 @@ class MarkdownWorkflowParams(BaseWorkflowParams):
     # --- UPDATED BACKEND LIST ---
     mineru_deploy_backend: Literal[
         "pipeline",
+        "vlm-engine",
+        "hybrid-engine",
         "vlm-auto-engine",
         "vlm-http-client",
         "hybrid-auto-engine",
@@ -428,6 +430,27 @@ class MarkdownWorkflowParams(BaseWorkflowParams):
                     "当 `convert_engine` 为 'mineru_deploy' 时，`mineru_deploy_base_url` 字段是必须的。"
                 )
         return self
+
+
+class PdfNativeDocxWorkflowParams(MarkdownWorkflowParams):
+    workflow_type: Literal["pdf_native_docx"] = Field(
+        ...,
+        description="先使用 MinerU 将 PDF 解析为 Markdown，再转换为原生 DOCX 并按 DOCX 工作流翻译。",
+    )
+    convert_engine: Literal["mineru", "mineru_deploy"] = Field(
+        ...,
+        description="原生 DOCX 路线仅支持 MinerU Cloud 或 MinerU 本地部署。",
+        examples=["mineru", "mineru_deploy"],
+    )
+    insert_mode: Literal["replace", "append", "prepend"] = Field(
+        "replace",
+        description="DOCX 译文插入模式。",
+    )
+    separator: str = Field("\n", description="追加或前置译文时使用的分隔符。")
+    translation_review_enable: bool = Field(
+        default=False,
+        description="是否使用同一 LLM 审校译文并写入 DOCX 评论。",
+    )
 
 
 class TextWorkflowParams(BaseWorkflowParams):
@@ -593,6 +616,7 @@ TranslatePayload = Annotated[
     Union[
         AutoWorkflowParams,
         MarkdownWorkflowParams,
+        PdfNativeDocxWorkflowParams,
         TextWorkflowParams,
         JsonWorkflowParams,
         XlsxWorkflowParams,
