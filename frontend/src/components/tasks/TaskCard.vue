@@ -77,6 +77,15 @@
                     <div><span>Total</span><strong>{{ formatTokens(stats.total_tokens) }}</strong></div>
                     <div><span>{{ t('unresolvedErrors') }}</span><strong>{{ stats.unresolved_errors || 0 }}</strong></div>
                 </div>
+                <p v-if="task.statistics?.review?.total_chunks != null" class="text-sm mt-3" role="status">
+                    {{ t('reviewCoverageSummary', {
+                        completed: task.statistics.review.completed_chunks,
+                        total: task.statistics.review.total_chunks,
+                        failed: task.statistics.review.failed_chunks,
+                        pending: task.statistics.review.pending_chunks,
+                        context: task.statistics.review.needs_context_chunks
+                    }) }}
+                </p>
                 <div v-if="task.attachment && Object.keys(task.attachment).length" class="task-attachments">
                     <span>{{ t('taskCardAttachmentBtn') }}:</span>
                     <a v-for="(link, name) in task.attachment" :key="name" :href="link">{{ name }}</a>

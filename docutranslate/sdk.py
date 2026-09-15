@@ -243,6 +243,7 @@ class Client:
             glossary_agent_config: Optional[Union[GlossaryAgentConfigPayload, Dict[str, Any]]] = None,
             office_password: Optional[str] = None,
             translation_review_enable: bool = False,
+            translation_review_language: Literal["source", "target"] = "target",
             **kwargs
     ) -> TranslationResult:
         """
@@ -329,6 +330,7 @@ class Client:
             # --- Docx/Xlsx 密码 ---
             office_password: Optional[str] = None,
             translation_review_enable: bool = False,
+            translation_review_language: Literal["source", "target"] = "target",
 
             **kwargs
     ) -> TranslationResult:
@@ -346,6 +348,7 @@ class Client:
         :param mineru_token: [Mineru Cloud] API Token。
         :param mineru_deploy_base_url: [Mineru Local] 本地服务地址。
         :param office_password: [Docx/Xlsx专用] 用于解密加密文件的密码。
+        :param translation_review_language: [Docx专用] 评论语言：source 跟随对应原文，target 跟随译文（默认）。
         :param translation_review_enable: [Docx专用] 对每个原文/译文分块执行 AI 审校并写入 Word 评论。
         """
 

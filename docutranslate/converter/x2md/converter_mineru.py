@@ -19,6 +19,11 @@ except ImportError:
     HAS_PYPDF = False
 
 from docutranslate.converter.x2md.base import X2MarkdownConverter, X2MarkdownConverterConfig
+from docutranslate.converter.x2md.mineru_evidence import (
+    MineruMarkdownDocument,
+    mineru_content_pages_from_zip,
+    offset_mineru_content_pages,
+)
 from docutranslate.ir.attachment_manager import AttachMent
 from docutranslate.ir.document import Document
 from docutranslate.ir.markdown_document import MarkdownDocument
@@ -252,6 +257,12 @@ class ConverterMineru(X2MarkdownConverter):
         md_content, mineru_parsed = await get_md_from_zip_url_with_inline_images_async(zip_url=file_url)
         return md_content, mineru_parsed
 
+    @staticmethod
+    def _chunk_page_count(content: bytes, suffix: str) -> int:
+        if suffix.lower() != ".pdf" or not HAS_PYPDF:
+            return 1
+        return len(PdfReader(io.BytesIO(content)).pages)
+
     def convert(self, document: Document) -> MarkdownDocument:
         self.logger.info(f"正在将文档转换为markdown,model_version:{self.model_version}")
         time1 = time.time()
@@ -265,6 +276,9 @@ class ConverterMineru(X2MarkdownConverter):
                 is_split = True
 
         combined_md = []
+        content_pages: set[int] = set()
+        content_pages_available = True
+        page_offset = 0
 
         # 2. 依次处理每个分片
         for i, chunk_content in enumerate(chunks):
@@ -273,6 +287,15 @@ class ConverterMineru(X2MarkdownConverter):
 
             md_content, mineru_parsed = self._process_single_chunk(chunk_content, document, i)
             combined_md.append(md_content)
+            chunk_content_pages = offset_mineru_content_pages(
+                mineru_content_pages_from_zip(mineru_parsed),
+                page_offset,
+            )
+            if chunk_content_pages is None:
+                content_pages_available = False
+            else:
+                content_pages.update(chunk_content_pages)
+            page_offset += self._chunk_page_count(chunk_content, document.suffix)
 
             # 保存对应的原始解析包
             suffix_name = "" if not is_split else f"_part{i + 1}"
@@ -286,8 +309,14 @@ class ConverterMineru(X2MarkdownConverter):
         final_content = "\n\n".join(combined_md)
 
         self.logger.info(f"已转换为markdown，耗时{time.time() - time1}秒")
-        md_document = MarkdownDocument.from_bytes(content=final_content.encode("utf-8"), suffix=".md",
-                                                  stem=document.stem)
+        md_document = MineruMarkdownDocument.from_bytes(
+            content=final_content.encode("utf-8"),
+            suffix=".md",
+            stem=document.stem,
+            mineru_content_pages=(
+                frozenset(content_pages) if content_pages_available else None
+            ),
+        )
         return md_document
 
     async def convert_async(self, document: Document) -> MarkdownDocument:
@@ -313,8 +342,20 @@ class ConverterMineru(X2MarkdownConverter):
         results = await asyncio.gather(*tasks)
 
         combined_md = []
+        content_pages: set[int] = set()
+        content_pages_available = True
+        page_offset = 0
         for i, (md_content, mineru_parsed) in enumerate(results):
             combined_md.append(md_content)
+            chunk_content_pages = offset_mineru_content_pages(
+                mineru_content_pages_from_zip(mineru_parsed),
+                page_offset,
+            )
+            if chunk_content_pages is None:
+                content_pages_available = False
+            else:
+                content_pages.update(chunk_content_pages)
+            page_offset += self._chunk_page_count(chunks[i], document.suffix)
 
             suffix_name = "" if not is_split else f"_part{i + 1}"
             if mineru_parsed:
@@ -327,8 +368,14 @@ class ConverterMineru(X2MarkdownConverter):
         final_content = "\n\n".join(combined_md)
 
         self.logger.info(f"已转换为markdown，耗时{time.time() - time1}秒")
-        md_document = MarkdownDocument.from_bytes(content=final_content.encode("utf-8"), suffix=".md",
-                                                  stem=document.stem)
+        md_document = MineruMarkdownDocument.from_bytes(
+            content=final_content.encode("utf-8"),
+            suffix=".md",
+            stem=document.stem,
+            mineru_content_pages=(
+                frozenset(content_pages) if content_pages_available else None
+            ),
+        )
         return md_document
 
     def support_format(self) -> list[str]:

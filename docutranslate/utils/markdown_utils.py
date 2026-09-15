@@ -5,6 +5,7 @@ import hashlib
 import io
 import mimetypes
 import os
+import posixpath
 import re
 import tempfile
 import threading
@@ -58,19 +59,15 @@ class MaskDict:
 
 def uris2placeholder(markdown: str, mask_dict: MaskDict):
     ##只替换uri里的链接部分，保留标题
-    def uri2placeholder(match: re.Match):
+    def image2placeholder(match: re.Match):
         id = mask_dict.create_id()
-        # 只替换base64数据
-        # mask_dict.set(id, match.group(2))
-        # return f"{match.group(1)}(<ph-{id}>)"
-
-        # 整个图片都替换为占位符
         mask_dict.set(id, match.group())
         print(f"生成占位符<ph-{id}>")
         return f"<ph-{id}>"
 
     uri_pattern = r'(!\[.*?\])\((.*?)\)'
-    markdown = re.sub(uri_pattern, uri2placeholder, markdown)
+    markdown = re.sub(uri_pattern, image2placeholder, markdown)
+    markdown = re.sub(r'<img\b[^>]*>', image2placeholder, markdown, flags=re.IGNORECASE)
     return markdown
 
 
@@ -168,20 +165,14 @@ def embed_inline_image_from_zip(zip_bytes: bytes, filename_in_zip: str | None = 
         # 获取Markdown文件在ZIP包内的基本目录
         base_md_path_in_zip = os.path.dirname(target_md_filename)
 
-        def replace_image_with_base64(match):
-            alt_text = match.group(1)
-            original_image_path = match.group(2)
-
+        def image_data_uri(original_image_path: str) -> str | None:
             if original_image_path.startswith(('http://', 'https://', 'data:')):
-                # print(f"  跳过外部或已内联图片: {original_image_path}")
-                return match.group(0)
-
-            image_path_in_zip = os.path.join(base_md_path_in_zip, original_image_path)
-            image_path_in_zip = os.path.normpath(image_path_in_zip).replace(os.sep, '/')
-
-            if image_path_in_zip.startswith('./'):
-                image_path_in_zip = image_path_in_zip[2:]
-
+                return None
+            image_path_in_zip = posixpath.normpath(
+                posixpath.join(base_md_path_in_zip, original_image_path)
+            )
+            if image_path_in_zip == ".." or image_path_in_zip.startswith("../"):
+                return None
             try:
                 image_bytes = archive.read(image_path_in_zip)
                 mime_type, _ = mimetypes.guess_type(image_path_in_zip)
@@ -193,20 +184,41 @@ def embed_inline_image_from_zip(zip_bytes: bytes, filename_in_zip: str | None = 
 
                 if not mime_type:
                     print(f"    警告: 无法确定图片 '{image_path_in_zip}' 的MIME类型。跳过内联。")
-                    return match.group(0)
+                    return None
 
                 base64_encoded_data = base64.b64encode(image_bytes).decode('utf-8')
-                new_image_tag = f"![{alt_text}](data:{mime_type};base64,{base64_encoded_data})"
-                return new_image_tag
+                return f"data:{mime_type};base64,{base64_encoded_data}"
             except KeyError:
                 print(f"    警告: 图片 '{image_path_in_zip}' 在ZIP压缩包中未找到。原始链接将被保留。")
-                return match.group(0)
+                return None
             except Exception as e_img:
                 print(f"    错误: 处理图片 '{image_path_in_zip}' 时发生错误: {e_img}。原始链接将被保留。")
+                return None
+
+        def replace_image_with_base64(match):
+            alt_text = match.group(1)
+            original_image_path = match.group(2)
+            data_uri = image_data_uri(original_image_path)
+            if data_uri is None:
                 return match.group(0)
+            return f"![{alt_text}]({data_uri})"
+
+        def replace_html_image_with_base64(match: re.Match) -> str:
+            data_uri = image_data_uri(match.group(3))
+            if data_uri is None:
+                return match.group(0)
+            return f"{match.group(1)}{match.group(2)}{data_uri}{match.group(2)}"
 
         image_regex = r"!\[(.*?)\]\((.*?)\)"
         modified_md_content = re.sub(image_regex, replace_image_with_base64, md_content_text)
+        html_image_regex = re.compile(
+            r"(<img\b[^>]*?\bsrc\s*=\s*)([\"'])([^\"']+)\2",
+            re.IGNORECASE,
+        )
+        modified_md_content = html_image_regex.sub(
+            replace_html_image_with_base64,
+            modified_md_content,
+        )
 
         print("图片处理完成。")
         return modified_md_content

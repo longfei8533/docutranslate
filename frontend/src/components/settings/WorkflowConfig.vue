@@ -69,6 +69,18 @@
                 <div class="text-sm text-gray-500 dark:text-gray-400 mt-1">
                     {{ t('docxTranslationReviewHelp') }}
                 </div>
+                <div v-if="workflowParams.docx.translation_review_enable" class="mt-3">
+                    <label for="docx-review-language" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{{ t('docxReviewLanguageLabel') }}</label>
+                    <select id="docx-review-language"
+                            class="w-full px-3 py-2 text-base border border-gray-300 dark:border-gray-600 rounded bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-primary"
+                            v-model="workflowParams.docx.translation_review_language"
+                            aria-describedby="docx-review-language-help"
+                            @change="saveWorkflowParam('translation_review_language')">
+                        <option value="target">{{ t('docxReviewLanguageTarget') }}</option>
+                        <option value="source">{{ t('docxReviewLanguageSource') }}</option>
+                    </select>
+                    <p id="docx-review-language-help" class="text-sm text-gray-500 dark:text-gray-400 mt-1">{{ t('docxReviewLanguageHelp') }}</p>
+                </div>
             </div>
 
             <!-- DOCX Password -->

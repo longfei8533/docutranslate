@@ -307,6 +307,7 @@ class UniversalParamsMixin(BaseModel):
     # Docx/Xlsx 密码相关
     office_password: Optional[str] = None
     translation_review_enable: Optional[bool] = None
+    translation_review_language: Optional[Literal["source", "target"]] = None
 
     # Json 相关
     json_paths: Optional[List[str]] = None
@@ -447,6 +448,9 @@ class PdfNativeDocxWorkflowParams(MarkdownWorkflowParams):
         description="DOCX 译文插入模式。",
     )
     separator: str = Field("\n", description="追加或前置译文时使用的分隔符。")
+    translation_review_language: Literal["source", "target"] = Field(
+        default="target", description="审校批注语言：source 跟随对应原文，target 跟随译文。",
+    )
     translation_review_enable: bool = Field(
         default=False,
         description="是否使用同一 LLM 审校译文并写入 DOCX 评论。",
@@ -522,6 +526,9 @@ class DocxWorkflowParams(BaseWorkflowParams):
         default=None,
         description="用于解密加密文件的密码。如果文件未加密，此参数将被忽略。",
         examples=[None, "mypassword123"],
+    )
+    translation_review_language: Literal["source", "target"] = Field(
+        default="target", description="审校批注语言：source 跟随对应原文，target 跟随译文。",
     )
     translation_review_enable: bool = Field(
         default=False,

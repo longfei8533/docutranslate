@@ -85,6 +85,7 @@ class DocxTranslatorConfig(AiTranslatorConfig):
     separator: str = "\n"
     office_password: Optional[str] = None
     translation_review_enable: bool = False
+    translation_review_language: Literal["source", "target"] = "target"
 
 
 # ---------------- 主类 ----------------
@@ -143,6 +144,7 @@ class DocxTranslator(AiTranslator):
             if self.translation_review_enable:
                 self.review_agent = TranslationReviewAgent(
                     agent_config,
+                    review_language=config.translation_review_language,
                     to_lang=config.to_lang,
                     custom_prompt=config.custom_prompt,
                     glossary_dict=glossary_dict,
@@ -287,7 +289,7 @@ class DocxTranslator(AiTranslator):
             current_runs.clear()
 
     def _process_body_elements(self, parent_element, container, elements: List[Dict[str, Any]], texts: List[str],
-                               top_level_para: Paragraph = None):
+                               top_level_para: Paragraph = None, visited_containers: set | None = None):
         """ 遍历一个容器内的所有顶级元素（段落、表格、内容控件等） """
         for child_element in parent_element:
             if child_element.tag.endswith('p'):
@@ -297,14 +299,16 @@ class DocxTranslator(AiTranslator):
                 table = Table(child_element, container)
                 for row in table.rows:
                     for cell in row.cells:
-                        self._traverse_container(cell, elements, texts)
+                        self._traverse_container(cell, elements, texts, visited_containers)
             elif child_element.tag.endswith('sdt'):
                 sdt_content = child_element.find(qn('w:sdtContent'))
                 if sdt_content is not None:
                     self._process_body_elements(sdt_content, container, elements, texts,
-                                                top_level_para=top_level_para)
+                                                top_level_para=top_level_para,
+                                                visited_containers=visited_containers)
 
-    def _traverse_container(self, container: Any, elements: List[Dict[str, Any]], texts: List[str]):
+    def _traverse_container(self, container: Any, elements: List[Dict[str, Any]], texts: List[str],
+                            visited_containers: set | None = None):
         if container is None:
             return
 
@@ -317,31 +321,45 @@ class DocxTranslator(AiTranslator):
             self.logger.warning(f"跳过未知类型的容器: {type(container)}")
             return
 
-        if parent_element is not None and parent_element.tag in [qn('w:footnotes'), qn('w:endnotes')]:
+        if parent_element is None:
+            return
+        if visited_containers is None:
+            visited_containers = set()
+        # row.cells repeats the same XML cell for merged grid positions; linked
+        # headers/footers likewise share a story. Track XML objects, not text or
+        # transient Python wrapper IDs, for this extraction only.
+        if parent_element in visited_containers:
+            return
+        visited_containers.add(parent_element)
+
+        if parent_element.tag in [qn('w:footnotes'), qn('w:endnotes')]:
             for note_element in parent_element:
-                self._process_body_elements(note_element, container, elements, texts)
+                self._process_body_elements(note_element, container, elements, texts,
+                                            visited_containers=visited_containers)
         elif parent_element is not None:
-            self._process_body_elements(parent_element, container, elements, texts)
+            self._process_body_elements(parent_element, container, elements, texts,
+                                        visited_containers=visited_containers)
 
     def _pre_translate(self, document: Document) -> Tuple[DocumentObject, List[Dict[str, Any]], List[str]]:
         content = self._decrypt_if_needed(document.content)
         doc = docx.Document(BytesIO(content))
         elements, texts = [], []
+        visited_containers = set()
 
-        self._traverse_container(doc, elements, texts)
+        self._traverse_container(doc, elements, texts, visited_containers)
 
         for section in doc.sections:
-            self._traverse_container(section.header, elements, texts)
-            self._traverse_container(section.first_page_header, elements, texts)
-            self._traverse_container(section.even_page_header, elements, texts)
-            self._traverse_container(section.footer, elements, texts)
-            self._traverse_container(section.first_page_footer, elements, texts)
-            self._traverse_container(section.even_page_footer, elements, texts)
+            self._traverse_container(section.header, elements, texts, visited_containers)
+            self._traverse_container(section.first_page_header, elements, texts, visited_containers)
+            self._traverse_container(section.even_page_header, elements, texts, visited_containers)
+            self._traverse_container(section.footer, elements, texts, visited_containers)
+            self._traverse_container(section.first_page_footer, elements, texts, visited_containers)
+            self._traverse_container(section.even_page_footer, elements, texts, visited_containers)
 
         if hasattr(doc.part, 'footnotes_part') and doc.part.footnotes_part is not None:
-            self._traverse_container(doc.part.footnotes_part, elements, texts)
+            self._traverse_container(doc.part.footnotes_part, elements, texts, visited_containers)
         if hasattr(doc.part, 'endnotes_part') and doc.part.endnotes_part is not None:
-            self._traverse_container(doc.part.endnotes_part, elements, texts)
+            self._traverse_container(doc.part.endnotes_part, elements, texts, visited_containers)
 
         return doc, elements, texts
 
@@ -706,10 +724,14 @@ class DocxTranslator(AiTranslator):
                         if separator_p_element is not None:
                             translated_p_element.addnext(separator_p_element)
 
+        written_comments = set()
         for segment_index, comment_text in sorted((reviews or {}).items()):
             anchor_run = translated_anchor_runs.get(segment_index)
             if anchor_run is None or anchor_run.element.getparent() is None:
                 self.logger.warning(f"无法为 segment {segment_index} 插入 AI Review 评论：译文锚点不存在。")
+                continue
+            comment_key = (anchor_run.element, comment_text)
+            if comment_key in written_comments:
                 continue
             try:
                 doc.add_comment(
@@ -718,6 +740,7 @@ class DocxTranslator(AiTranslator):
                     author="AI Review",
                     initials="AI",
                 )
+                written_comments.add(comment_key)
             except Exception as exc:
                 self.logger.warning(f"无法为 segment {segment_index} 插入 AI Review 评论: {exc!r}")
 

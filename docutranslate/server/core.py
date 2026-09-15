@@ -346,7 +346,7 @@ class TranslationService:
                 "mineru_deploy_start_page_id", "mineru_deploy_end_page_id",
                 "mineru_deploy_lang_list", "mineru_deploy_server_url",
                 "insert_mode", "separator", "translate_regions", "json_paths", "md2docx_engine",
-                "translation_review_enable",
+                "translation_review_enable", "translation_review_language",
             ]
             for field_name in universal_fields:
                 if hasattr(payload, field_name):
@@ -940,7 +940,7 @@ class TranslationService:
                     "insert_mode",
                     "separator",
                     "office_password",
-                    "translation_review_enable",
+                    "translation_review_enable", "translation_review_language",
                     "glossary_dict",
                     "timeout",
                     "retry",

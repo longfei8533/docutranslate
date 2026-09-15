@@ -1,4 +1,9 @@
 {
+  "reviewCoverageSummary": "AI review: {completed}/{total} chunks completed; {failed} failed; {pending} pending; {context} needing context.",
+  "docxReviewLanguageHelp": "Controls comments only; evidence quotes stay unchanged. For multilingual sources, use each passage’s main language; fall back to the translation language when unclear.",
+  "docxReviewLanguageSource": "Source language",
+  "docxReviewLanguageTarget": "Translation language",
+  "docxReviewLanguageLabel": "Review comment language",
   "pageTitle": "DocuTranslate - Interactive Document Translation",
   "tutorialBtn": "Tutorial",
   "workflowTitle": "Select Workflow",
@@ -30,7 +35,7 @@
   "segmentModeHelp": "Choose how to segment the text for translation.",
   "docxSettingsTitleText": "DOCX Translation Options",
   "docxTranslationReviewLabel": "AI Translation Review",
-  "docxTranslationReviewHelp": "Review each translated chunk against its source with the same model and add any issues to the translated Word document as comments by AI Review.",
+  "docxTranslationReviewHelp": "Review each translated chunk with the same model. Add evidenced issues or questions needing context as Word comments by AI Review, without changing the translation.",
   "insertModeHelpDocx": "Choose how to insert the translated text.",
   "xlsxSettingsTitleText": "XLSX Translation Options",
   "insertModeHelpXlsx": "Choose how to insert the translated text into cells.",

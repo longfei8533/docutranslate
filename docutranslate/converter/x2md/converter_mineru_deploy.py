@@ -7,6 +7,10 @@ from typing import Literal, Hashable, List
 import httpx
 
 from docutranslate.converter.x2md.base import X2MarkdownConverter, X2MarkdownConverterConfig
+from docutranslate.converter.x2md.mineru_evidence import (
+    MineruMarkdownDocument,
+    mineru_content_pages_from_zip,
+)
 from docutranslate.ir.attachment_manager import AttachMent
 from docutranslate.ir.document import Document
 from docutranslate.ir.markdown_document import MarkdownDocument
@@ -138,7 +142,12 @@ class ConverterMineruDeploy(X2MarkdownConverter):
                        Document.from_bytes(content=response.content, suffix=".zip", stem="mineru_deploy"))
         )
         self.logger.info("已转化为markdown")
-        return MarkdownDocument.from_bytes(md.encode(), suffix=".md", stem=d.stem)
+        return MineruMarkdownDocument.from_bytes(
+            md.encode(),
+            suffix=".md",
+            stem=d.stem,
+            mineru_content_pages=mineru_content_pages_from_zip(response.content),
+        )
 
     async def convert_async(self, d: Document) -> MarkdownDocument:
         self.logger.info("开始解析文件")
@@ -169,7 +178,12 @@ class ConverterMineruDeploy(X2MarkdownConverter):
                        Document.from_bytes(content=response.content, suffix=".zip", stem="mineru_deploy"))
         )
         self.logger.info("已转化为markdown")
-        return MarkdownDocument.from_bytes(md.encode(), suffix=".md", stem=d.stem)
+        return MineruMarkdownDocument.from_bytes(
+            md.encode(),
+            suffix=".md",
+            stem=d.stem,
+            mineru_content_pages=mineru_content_pages_from_zip(response.content),
+        )
 
     def support_format(self) -> list[str]:
         return [".pdf", ".doc", ".docx", ".ppt", ".pptx", ".png", ".jpg", ".jpeg"]

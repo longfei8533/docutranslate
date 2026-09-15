@@ -1,4 +1,9 @@
 {
+  "reviewCoverageSummary": "AI 审校：已完成 {completed}/{total} 块；失败 {failed} 块；未完成 {pending} 块；含待核实疑点 {context} 块。",
+  "docxReviewLanguageHelp": "仅控制批注语言，证据引用保留原句。原文含多种语言时按对应段落的主要语言；无法判断时使用译文语言。",
+  "docxReviewLanguageSource": "跟随原文",
+  "docxReviewLanguageTarget": "跟随译文",
+  "docxReviewLanguageLabel": "审校批注语言",
   "pageTitle": "DocuTranslate - 交互式文档翻译",
   "tutorialBtn": "教程",
   "workflowTitle": "选择工作流",
@@ -30,7 +35,7 @@
   "segmentModeHelp": "选择如何将文本分割成块进行翻译。",
   "docxSettingsTitleText": "DOCX翻译选项",
   "docxTranslationReviewLabel": "AI 翻译审校",
-  "docxTranslationReviewHelp": "每个翻译分块返回后立即使用同一模型对照原文检查，并将问题以作者为 AI Review 的 Word 评论写入译文。",
+  "docxTranslationReviewHelp": "每个翻译分块返回后使用同一模型对照原文检查，将有证据的问题或待核实疑点写入 Word 批注。批注作者为 AI Review，不会自动修改译文。",
   "insertModeHelpDocx": "选择如何将翻译后的文本插入。",
   "xlsxSettingsTitleText": "XLSX翻译选项",
   "insertModeHelpXlsx": "选择如何将翻译后的文本插入到单元格中。",

@@ -332,6 +332,23 @@ def _set_run_font(run: Any, latin: str, east_asia: str, size: float | None = Non
         run.font.size = Pt(size)
 
 
+def _set_table_borders(table: Any) -> None:
+    table_properties = table._tbl.tblPr
+    borders = table_properties.find(qn("w:tblBorders"))
+    if borders is None:
+        borders = OxmlElement("w:tblBorders")
+        table_properties.append(borders)
+    for edge_name in ("top", "left", "bottom", "right", "insideH", "insideV"):
+        edge = borders.find(qn(f"w:{edge_name}"))
+        if edge is None:
+            edge = OxmlElement(f"w:{edge_name}")
+            borders.append(edge)
+        edge.set(qn("w:val"), "single")
+        edge.set(qn("w:sz"), "6")
+        edge.set(qn("w:space"), "0")
+        edge.set(qn("w:color"), "000000")
+
+
 def _style_docx(path: Path) -> dict[str, int]:
     doc = DocxDocument(path)
 
@@ -399,11 +416,11 @@ def _style_docx(path: Path) -> dict[str, int]:
 
     for table in doc.tables:
         table.autofit = True
-        if table.rows:
-            header = OxmlElement("w:tblHeader")
-            header.set(qn("w:val"), "true")
-            table.rows[0]._tr.get_or_add_trPr().append(header)
+        _set_table_borders(table)
         for row in table.rows:
+            row_properties = row._tr.get_or_add_trPr()
+            if row_properties.find(qn("w:cantSplit")) is None:
+                row_properties.append(OxmlElement("w:cantSplit"))
             for cell in row.cells:
                 cell.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.CENTER
                 for paragraph in cell.paragraphs:
