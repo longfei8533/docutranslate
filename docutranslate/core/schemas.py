@@ -22,11 +22,11 @@ from pydantic import (
 )
 
 from docutranslate.agents.agent import ThinkingMode
-from docutranslate.agents.thinking.thinking_factory import ProviderType
+from docutranslate.agents.thinking.thinking_factory import ProviderType, ReasoningEffort
 from docutranslate.config import (
     # BaseWorkflowParams defaults
     CHUNK_SIZE, CONCURRENT, TEMPERATURE, TOP_P, TIMEOUT,
-    THINKING, RETRY, SYSTEM_PROXY_ENABLE,
+    THINKING, REASONING_EFFORT, RETRY, SYSTEM_PROXY_ENABLE,
     # Env defaults for empty fields
     API_KEY, BASE_URL, MODEL_ID, TO_LANG, PROVIDER,
     # Force override flag and env set tracker
@@ -87,6 +87,11 @@ class GlossaryAgentConfigPayload(BaseModel):
         default=TIMEOUT, description="等待API回复的时间（秒）。"
     )
     thinking: ThinkingMode = Field(default="default", description="Agent的思考模式。")
+    reasoning_effort: Optional[ReasoningEffort] = Field(
+        default=None,
+        description="正式推理强度：none、low、medium、high 或 xhigh。显式设置时优先于 thinking。",
+        examples=["none", "low", "medium", "high", "xhigh"],
+    )
     retry: int = Field(
         default=RETRY, description="分块失败后的最大重试次数。"
     )
@@ -171,6 +176,11 @@ class BaseWorkflowParams(BaseModel):
         description="Agent的思考模式。",
         examples=["default", "enable", "disable"],
     )
+    reasoning_effort: Optional[ReasoningEffort] = Field(
+        default=None,
+        description="正式推理强度：none、low、medium、high 或 xhigh。显式设置时优先于 thinking。",
+        examples=["none", "low", "medium", "high", "xhigh"],
+    )
     retry: int = Field(
         default=RETRY,
         description="某个分块翻译失败后的最大重试次数。",
@@ -254,6 +264,22 @@ class BaseWorkflowParams(BaseModel):
                     for field, env_value in env_values.items():
                         if not values.get(field) and env_value:
                             values[field] = env_value
+
+                # 仅在用户实际设置了正式环境变量时注入它；配置模块的默认值
+                # `none` 不能覆盖显式传入的旧 thinking=enable。
+                if ENV_SET.get("reasoning_effort") and (
+                    ENV_FORCE_OVERRIDE or not values.get("reasoning_effort")
+                ):
+                    values["reasoning_effort"] = REASONING_EFFORT
+
+                # reasoning_effort 是正式参数，优先级高于旧 thinking。
+                # 未传正式参数时，将旧入口映射到 GPT-5.6 的五档值，保证旧客户端行为不变。
+                if not values.get("reasoning_effort"):
+                    legacy_thinking = values.get("thinking", THINKING)
+                    values["reasoning_effort"] = {
+                        "enable": "medium",
+                        "disable": "none",
+                    }.get(legacy_thinking, REASONING_EFFORT)
 
                 # 验证：如果填充后仍为空，则报错（Auto 模式除外）
                 if not (values.get("base_url") or values.get("baseurl")):

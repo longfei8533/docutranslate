@@ -1047,7 +1047,8 @@ async def service_get_task_list():
                         "temperature": 0.3,
                         "timeout": 60,
                         "retry": 3,
-                        "thinking": "default"
+                        "thinking": "default",
+                        "reasoning_effort": "none"
                     }
                 }
             }
@@ -1109,6 +1110,7 @@ async def service_flat_translate(
         timeout: int = Form(default_params["timeout"], description="单次请求超时时间(秒)"),
         retry: int = Form(default_params["retry"], description="失败重试次数"),
         thinking: str = Form("default", description="思考模式: default, enable, disable"),
+        reasoning_effort: Optional[str] = Form(None, description="推理强度: none, low, medium, high, xhigh"),
         custom_prompt: Optional[str] = Form("", description="自定义系统提示词"),
         system_proxy_enable: bool = Form(default_params["system_proxy_enable"], description="是否启用系统代理"),
         force_json: bool = Form(False, description="强制 LLM 输出 JSON 格式"),
@@ -1193,6 +1195,7 @@ async def service_flat_translate(
         "timeout": timeout,
         "retry": retry,
         "thinking": thinking,
+        "reasoning_effort": reasoning_effort,
         "custom_prompt": custom_prompt,
         "system_proxy_enable": system_proxy_enable,
         "force_json": force_json,

@@ -19,9 +19,9 @@ from typing import Any, Dict, Optional, List
 from docutranslate.config import (
     PORT,
     # BaseWorkflowParams defaults
-    API_KEY, BASE_URL, MODEL_ID, TO_LANG, PROVIDER,
+    API_KEY, BASE_URL, MODEL_ID, TO_LANG, PROVIDER, ENV_SET,
     CHUNK_SIZE, CONCURRENT, TEMPERATURE, TOP_P, TIMEOUT,
-    THINKING, RETRY, SYSTEM_PROXY_ENABLE,
+    THINKING, REASONING_EFFORT, RETRY, SYSTEM_PROXY_ENABLE,
     CUSTOM_PROMPT, FORCE_JSON, RPM, TPM,
     EXTRA_BODY, GLOSSARY_GENERATE_ENABLE,
     # MarkdownWorkflowParams defaults
@@ -43,6 +43,7 @@ from docutranslate.server import (
 from docutranslate import __version__
 from docutranslate.core.schemas import TranslatePayload
 from pydantic import TypeAdapter
+from docutranslate.agents.thinking.thinking_factory import ReasoningEffort
 
 # MCP Server configuration
 SERVER_NAME = "docutranslate"
@@ -182,6 +183,8 @@ if MCP_AVAILABLE and FastMCP is not None and Context is not None:
             "separator": SEPARATOR,
             "segment_mode": SEGMENT_MODE,
         }
+        if ENV_SET.get("reasoning_effort"):
+            client_config["reasoning_effort"] = REASONING_EFFORT
 
         # Create FastMCP instance
         mcp = FastMCP(
@@ -223,6 +226,7 @@ if MCP_AVAILABLE and FastMCP is not None and Context is not None:
                 provider: Optional[str] = None,
                 to_lang: Optional[str] = None,
                 thinking: Optional[str] = None,
+                reasoning_effort: Optional[ReasoningEffort] = None,
                 chunk_size: Optional[int] = None,
                 concurrent: Optional[int] = None,
                 temperature: Optional[float] = None,
@@ -264,6 +268,7 @@ if MCP_AVAILABLE and FastMCP is not None and Context is not None:
                 provider: LLM provider identifier
                 to_lang: Target language (default: 中文)
                 thinking: Thinking mode (default, enable, disable)
+                reasoning_effort: Reasoning strength (none, low, medium, high, xhigh); takes precedence over thinking
                 chunk_size: Text chunk size for translation
                 concurrent: Number of concurrent requests (default: 10)
                 temperature: LLM temperature parameter
@@ -305,6 +310,8 @@ if MCP_AVAILABLE and FastMCP is not None and Context is not None:
                 client_config["to_lang"] = to_lang
             if thinking is not None:
                 client_config["thinking"] = thinking
+            if reasoning_effort is not None:
+                client_config["reasoning_effort"] = reasoning_effort
             if chunk_size is not None:
                 client_config["chunk_size"] = chunk_size
             if concurrent is not None:
@@ -442,6 +449,7 @@ if MCP_AVAILABLE and FastMCP is not None and Context is not None:
                 top_p: Optional[float] = None,
                 timeout: Optional[int] = None,
                 thinking: Optional[str] = None,
+                reasoning_effort: Optional[ReasoningEffort] = None,
                 retry: Optional[int] = None,
                 system_proxy_enable: Optional[bool] = None,
                 custom_prompt: str = "",
@@ -496,6 +504,7 @@ if MCP_AVAILABLE and FastMCP is not None and Context is not None:
                 temperature: LLM temperature parameter
                 timeout: Request timeout in seconds
                 thinking: Thinking mode (default, enable, disable)
+                reasoning_effort: Reasoning strength (none, low, medium, high, xhigh); takes precedence over thinking
                 retry: Number of retries for failed chunks
                 system_proxy_enable: Enable system proxy
                 custom_prompt: Custom system prompt
@@ -643,6 +652,13 @@ if MCP_AVAILABLE and FastMCP is not None and Context is not None:
             use_thinking = thinking if thinking is not None else client_config.get("thinking")
             if use_thinking:
                 payload_dict["thinking"] = use_thinking
+            use_reasoning_effort = (
+                reasoning_effort
+                if reasoning_effort is not None
+                else client_config.get("reasoning_effort")
+            )
+            if use_reasoning_effort is not None:
+                payload_dict["reasoning_effort"] = use_reasoning_effort
             use_retry = retry if retry is not None else client_config.get("retry")
             if use_retry is not None:
                 payload_dict["retry"] = use_retry

@@ -18,7 +18,12 @@ from urllib.parse import urlparse
 import httpx
 
 from docutranslate.agents.provider import get_provider_by_domain
-from docutranslate.agents.thinking.thinking_factory import get_thinking_mode, ProviderType
+from docutranslate.agents.thinking.thinking_factory import (
+    get_thinking_mode,
+    ProviderType,
+    ReasoningEffort,
+    SUPPORTED_REASONING_EFFORTS,
+)
 from docutranslate.logger import global_logger
 from docutranslate.utils.utils import get_httpx_proxies
 
@@ -67,6 +72,13 @@ class PartialAgentResultError(ValueError):
         self.append_prompt = append_prompt
 
 
+class UnsupportedReasoningEffortError(RuntimeError):
+    """推理档位与当前模型、供应商或网关不兼容。"""
+
+    def __init__(self, message: str):
+        super().__init__(message)
+
+
 @dataclass(kw_only=True)
 class AgentConfig:
     logger: logging.Logger = global_logger
@@ -78,6 +90,7 @@ class AgentConfig:
     concurrent: int = 30
     timeout: int = 1200
     thinking: ThinkingMode = "disable"
+    reasoning_effort: ReasoningEffort | None = None
     retry: int = 2
     system_proxy_enable: bool = False
     force_json: bool = False
@@ -349,6 +362,8 @@ class Agent:
         self.max_concurrent = config.concurrent
         self.timeout = httpx.Timeout(connect=5, read=config.timeout, write=300, pool=10)
         self.thinking = config.thinking
+        self.reasoning_effort = config.reasoning_effort
+        self._active_reasoning_effort: ReasoningEffort | None = None
         self.logger = config.logger
         self.total_error_counter = TotalErrorCounter(logger=self.logger)
         self.unresolved_error_lock = Lock()
@@ -441,6 +456,65 @@ class Agent:
             # 普通字段直接设置
             data[field_thinking] = value
 
+    def _apply_reasoning_settings(self, data: dict):
+        """Apply the formal reasoning setting, or preserve legacy thinking behavior."""
+        thinking_mode_result = get_thinking_mode(self.provider, data.get("model"))
+        self._active_reasoning_effort = None
+
+        if self.reasoning_effort is not None:
+            effort = self.reasoning_effort
+            if effort not in SUPPORTED_REASONING_EFFORTS:
+                raise UnsupportedReasoningEffortError(
+                    "reasoning_effort 必须是 none、low、medium、high 或 xhigh，"
+                    f"当前值为 {effort!r}。"
+                )
+            if thinking_mode_result is None:
+                raise UnsupportedReasoningEffortError(
+                    f"模型 {self.model_id!r} 没有可用的 reasoning_effort 映射，"
+                    "未自动降级。"
+                )
+
+            field_thinking, _, val_disable = thinking_mode_result
+            if field_thinking != "reasoning_effort":
+                if effort != "none":
+                    raise UnsupportedReasoningEffortError(
+                        f"供应商 {self.provider!r} / 模型 {self.model_id!r} 使用 "
+                        f"{field_thinking!r} 控制推理，不支持 reasoning_effort={effort!r}；"
+                        "未自动降级。"
+                    )
+                if field_thinking == "extra_body" and isinstance(val_disable, dict):
+                    data.update(val_disable)
+                else:
+                    data[field_thinking] = val_disable
+                return
+
+            data["reasoning_effort"] = effort
+            if effort != "none":
+                self._active_reasoning_effort = effort
+            return
+
+        # Backward compatibility for callers that still only pass thinking.
+        if self.thinking != "default":
+            self._add_thinking_mode(data)
+            if (
+                self.thinking == "enable"
+                and thinking_mode_result is not None
+                and thinking_mode_result[0] == "reasoning_effort"
+            ):
+                self._active_reasoning_effort = "medium"
+
+    def _raise_if_reasoning_unsupported(self, error: httpx.HTTPStatusError):
+        """Do not silently retry/fallback when the gateway rejects reasoning params."""
+        if (
+            self._active_reasoning_effort is not None
+            and error.response.status_code in (400, 422)
+        ):
+            raise UnsupportedReasoningEffortError(
+                f"模型 {self.model_id!r} 拒绝 reasoning_effort="
+                f"{self._active_reasoning_effort!r}（HTTP {error.response.status_code}）；"
+                "请确认模型或网关支持该档位，未自动降级。"
+            ) from error
+
     def _prepare_request_data(
             self, prompt: str, system_prompt: str, temperature=None, top_p=None, json_format=False
     ):
@@ -462,9 +536,8 @@ class Agent:
             "top_p": top_p,
         }
 
-        # 先应用思考模式
-        if self.thinking != "default":
-            self._add_thinking_mode(data)
+        # 先应用正式推理档位；没有正式参数时保留旧 thinking 行为。
+        self._apply_reasoning_settings(data)
 
         # 再应用用户的 extra_body（用户配置优先，可以覆盖思考模式）
         if self.extra_body and self.extra_body.strip():
@@ -472,9 +545,35 @@ class Agent:
                 import json
                 extra = json.loads(self.extra_body)
                 if isinstance(extra, dict):
+                    selected_reasoning = data.get("reasoning_effort")
+                    if (
+                        selected_reasoning is not None
+                        and "reasoning_effort" in extra
+                        and extra["reasoning_effort"] != selected_reasoning
+                    ):
+                        raise UnsupportedReasoningEffortError(
+                            "extra_body 不能覆盖已选择的 reasoning_effort。"
+                        )
                     data.update(extra)
             except (json.JSONDecodeError, ValueError):
                 self.logger.warning(f"Failed to parse extra_body JSON: {self.extra_body}")
+
+        effective_reasoning_effort = data.get("reasoning_effort")
+        if effective_reasoning_effort is not None:
+            if effective_reasoning_effort not in SUPPORTED_REASONING_EFFORTS:
+                raise UnsupportedReasoningEffortError(
+                    "reasoning_effort 必须是 none、low、medium、high 或 xhigh，"
+                    f"当前值为 {effective_reasoning_effort!r}。"
+                )
+            self._active_reasoning_effort = (
+                None if effective_reasoning_effort == "none" else effective_reasoning_effort
+            )
+
+        # GPT-5.6 reasoning 模式不接受 sampling 参数；在 extra_body 合并后
+        # 再删除，确保额外请求体也不能把冲突参数重新带回来。
+        if self._active_reasoning_effort is not None:
+            data.pop("temperature", None)
+            data.pop("top_p", None)
 
         if json_format:
             data["response_format"] = {"type": "json_object"}
@@ -592,7 +691,26 @@ class Agent:
                 self.logger.warning(f"继续获取完成但结果无效: {e}")
                 return accumulated_result
 
-        except (httpx.HTTPStatusError, httpx.RequestError, KeyError, IndexError, ValueError) as e:
+        except httpx.HTTPStatusError as e:
+            self._raise_if_reasoning_unsupported(e)
+            self.logger.error(f"继续获取内容失败: {repr(e)}")
+            # 退化：返回已获取的部分结果，而不是报错
+            if accumulated_result:
+                self.logger.warning(f"API不支持继续获取，返回已获取的部分结果 ({len(accumulated_result)} 字符)")
+                # 即使是部分结果，也尝试清理一下
+                accumulated_result = self._sanitize_result(accumulated_result)
+                return (
+                    accumulated_result
+                    if result_handler is None
+                    else result_handler(accumulated_result, prompt, self.logger)
+                )
+            # 如果没有部分结果，调用错误处理器
+            return (
+                prompt
+                if error_result_handler is None
+                else error_result_handler(prompt, self.logger)
+            )
+        except (httpx.RequestError, KeyError, IndexError, ValueError) as e:
             self.logger.error(f"继续获取内容失败: {repr(e)}")
             # 退化：返回已获取的部分结果，而不是报错
             if accumulated_result:
@@ -729,6 +847,7 @@ class Agent:
                 prompt += e.append_prompt
 
         except httpx.HTTPStatusError as e:
+            self._raise_if_reasoning_unsupported(e)
             self.logger.error(
                 f"AI请求HTTP状态错误 (async): {e.response.status_code} - {e.response.text}"
             )
@@ -1020,7 +1139,24 @@ class Agent:
                 self.logger.warning(f"继续获取完成但结果无效: {e}")
                 return accumulated_result
 
-        except (httpx.HTTPStatusError, httpx.RequestError, KeyError, IndexError, ValueError) as e:
+        except httpx.HTTPStatusError as e:
+            self._raise_if_reasoning_unsupported(e)
+            self.logger.error(f"继续获取内容失败: {repr(e)}")
+            # 退化：返回已获取的部分结果，而不是报错
+            if accumulated_result:
+                self.logger.warning(f"API不支持继续获取，返回已获取的部分结果 ({len(accumulated_result)} 字符)")
+                accumulated_result = self._sanitize_result(accumulated_result)
+                return (
+                    accumulated_result
+                    if result_handler is None
+                    else result_handler(accumulated_result, prompt, self.logger)
+                )
+            return (
+                prompt
+                if error_result_handler is None
+                else error_result_handler(prompt, self.logger)
+            )
+        except (httpx.RequestError, KeyError, IndexError, ValueError) as e:
             self.logger.error(f"继续获取内容失败: {repr(e)}")
             # 退化：返回已获取的部分结果，而不是报错
             if accumulated_result:
@@ -1149,6 +1285,7 @@ class Agent:
             should_retry = True
 
         except httpx.HTTPStatusError as e:
+            self._raise_if_reasoning_unsupported(e)
             self.logger.error(
                 f"AI请求HTTP状态错误 (sync): {e.response.status_code} - {e.response.text}"
             )

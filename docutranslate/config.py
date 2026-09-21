@@ -5,6 +5,8 @@ import os
 from typing import Optional
 from pathlib import Path
 
+from docutranslate.agents.thinking.thinking_factory import SUPPORTED_REASONING_EFFORTS
+
 
 def _get_exe_dir() -> Path:
     """Get the directory where the executable or script is located"""
@@ -110,6 +112,12 @@ TEMPERATURE = _get_env_float("DOCUTRANSLATE_TEMPERATURE", 0.7)
 TOP_P = _get_env_float("DOCUTRANSLATE_TOP_P", 0.9)
 TIMEOUT = _get_env_int("DOCUTRANSLATE_TIMEOUT", 1200)
 THINKING = _get_env_str("DOCUTRANSLATE_THINKING", "disable")
+REASONING_EFFORT = _get_env_str("DOCUTRANSLATE_REASONING_EFFORT", "none").strip().lower()
+if REASONING_EFFORT not in SUPPORTED_REASONING_EFFORTS:
+    raise ValueError(
+        "DOCUTRANSLATE_REASONING_EFFORT must be one of: "
+        + ", ".join(SUPPORTED_REASONING_EFFORTS)
+    )
 RETRY = _get_env_int("DOCUTRANSLATE_RETRY", 2)
 SYSTEM_PROXY_ENABLE = _get_env_bool("DOCUTRANSLATE_SYSTEM_PROXY_ENABLE", False)
 CUSTOM_PROMPT = _get_env_str("DOCUTRANSLATE_CUSTOM_PROMPT", "")
@@ -128,6 +136,7 @@ ENV_SET = {
     "to_lang": _is_env_set("DOCUTRANSLATE_TO_LANG"),
     "provider": _is_env_set("DOCUTRANSLATE_PROVIDER"),
     "thinking": _is_env_set("DOCUTRANSLATE_THINKING"),
+    "reasoning_effort": _is_env_set("DOCUTRANSLATE_REASONING_EFFORT"),
     "chunk_size": _is_env_set("DOCUTRANSLATE_CHUNK_SIZE"),
     "concurrent": _is_env_set("DOCUTRANSLATE_CONCURRENT"),
     "temperature": _is_env_set("DOCUTRANSLATE_TEMPERATURE"),
@@ -188,6 +197,7 @@ CACHE_NUM = _get_env_int("DOCUTRANSLATE_CACHE_NUM", 10)
 # ============================================================
 default_params = {
     "thinking": THINKING,
+    "reasoning_effort": REASONING_EFFORT,
     "chunk_size": CHUNK_SIZE,
     "concurrent": CONCURRENT,
     "temperature": TEMPERATURE,

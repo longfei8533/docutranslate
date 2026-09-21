@@ -52,6 +52,7 @@ class XlsxTranslator(AiTranslator):
                 temperature=config.temperature,
                 top_p=config.top_p,
                 thinking=config.thinking,
+                reasoning_effort=config.reasoning_effort,
                 concurrent=config.concurrent,
                 timeout=config.timeout,
                 logger=self.logger,

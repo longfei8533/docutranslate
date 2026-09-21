@@ -3,6 +3,10 @@ from typing import TypeAlias, Literal, Any
 from docutranslate.agents.provider import ProviderType
 
 ModeType: TypeAlias = Literal["ollama", "bigmodel", "aliyuncs", "volces", "google", "siliconflow", "deepseek", "default"]
+ReasoningEffort: TypeAlias = Literal["none", "low", "medium", "high", "xhigh"]
+SUPPORTED_REASONING_EFFORTS: tuple[ReasoningEffort, ...] = (
+    "none", "low", "medium", "high", "xhigh",
+)
 ThinkingField: TypeAlias = str
 EnableValueType: TypeAlias = str | dict[str, Any] | bool
 DisableValueType: TypeAlias = str | dict[str, Any] | bool

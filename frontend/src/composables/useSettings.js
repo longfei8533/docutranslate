@@ -7,6 +7,18 @@ import {
     sanitizeWebWorkflowMappings,
 } from '../constants/workflows.js';
 
+export const REASONING_EFFORTS = Object.freeze(['none', 'low', 'medium', 'high', 'xhigh']);
+
+const normalizeReasoningEffort = (value, fallback = 'none') => (
+    REASONING_EFFORTS.includes(value) ? value : fallback
+);
+
+const legacyThinkingToReasoning = (thinking, fallback = 'none') => {
+    if (thinking === 'enable') return 'medium';
+    if (thinking === 'disable') return 'none';
+    return normalizeReasoningEffort(fallback);
+};
+
 // ===== 存储键名常量 =====
 export const STORAGE = {
     keys: {
@@ -18,6 +30,7 @@ export const STORAGE = {
         CONCURRENT: 'concurrent',
         TEMPERATURE: 'temperature',
         TOP_P: 'top_p',
+        REASONING_EFFORT: 'translator_reasoning_effort',
         RETRY: 'retry',
         RPM: 'rpm',
         TPM: 'tpm',
@@ -53,6 +66,7 @@ export function useSettings() {
         concurrent: 5,
         temperature: 0.7,
         top_p: 0.9,
+        reasoning_effort: 'none',
         retry: 3
     });
 
@@ -97,6 +111,7 @@ export function useSettings() {
         to_lang: 'Simplified Chinese',
         custom_to_lang: '',
         thinking: 'disable',
+        reasoning_effort: 'none',
         custom_prompt: '',
         chunk_size: 4000,
         concurrent: 30,
@@ -122,6 +137,7 @@ export function useSettings() {
         glossary_agent_top_p: 0.9,
         glossary_agent_retry: 2,
         glossary_agent_thinking: 'default',
+        glossary_agent_reasoning_effort: 'none',
         glossary_agent_system_proxy_enable: false,
         glossary_agent_force_json: false,
         glossary_agent_rpm: null,
@@ -186,6 +202,11 @@ export function useSettings() {
         form.to_lang = storage.get('translator_to_lang', 'Simplified Chinese');
         form.custom_to_lang = storage.get('translator_custom_to_lang', '');
         form.thinking = storage.get('translator_thinking_mode', defaults.thinking ?? 'disable');
+        const savedReasoningEffort = localStorage.getItem(STORAGE.keys.REASONING_EFFORT);
+        form.reasoning_effort = normalizeReasoningEffort(
+            savedReasoningEffort,
+            legacyThinkingToReasoning(form.thinking, defaults.reasoning_effort ?? 'none'),
+        );
         form.custom_prompt = storage.get(STORAGE.keys.CUSTOM_PROMPT, '');
         form.chunk_size = storage.getNum(STORAGE.keys.CHUNK_SIZE, defaults.chunk_size ?? 4000);
         form.concurrent = storage.getNum(STORAGE.keys.CONCURRENT, defaults.concurrent ?? 30);
@@ -219,6 +240,11 @@ export function useSettings() {
         form.glossary_agent_top_p = storage.getNum('glossary_agent_top_p', 0.9);
         form.glossary_agent_retry = storage.getNum('glossary_agent_retry', defaults.retry ?? 3);
         form.glossary_agent_thinking = storage.get('glossary_agent_thinking_mode', defaults.thinking ?? 'default');
+        const savedGlossaryReasoningEffort = localStorage.getItem('glossary_agent_reasoning_effort');
+        form.glossary_agent_reasoning_effort = normalizeReasoningEffort(
+            savedGlossaryReasoningEffort,
+            legacyThinkingToReasoning(form.glossary_agent_thinking, defaults.reasoning_effort ?? 'none'),
+        );
         form.glossary_agent_system_proxy_enable = storage.getBool('glossary_agent_system_proxy_enable', defaults.system_proxy_enable ?? false);
         form.glossary_agent_force_json = storage.getBool('glossary_agent_force_json', false);
         form.glossary_agent_rpm = storage.getNumOrNull('glossary_agent_rpm');
@@ -313,7 +339,8 @@ export function useSettings() {
         storage.set('translator_force_json', f.force_json);
         storage.set('translator_to_lang', f.to_lang);
         storage.set('translator_custom_to_lang', f.custom_to_lang);
-        storage.set('translator_thinking_mode', f.thinking);
+        storage.set(STORAGE.keys.REASONING_EFFORT, f.reasoning_effort);
+        storage.set('translator_thinking_mode', f.reasoning_effort === 'none' ? 'disable' : 'enable');
         storage.set(STORAGE.keys.CUSTOM_PROMPT, f.custom_prompt);
         storage.set(STORAGE.keys.CHUNK_SIZE, f.chunk_size);
         storage.set(STORAGE.keys.CONCURRENT, f.concurrent);
@@ -343,7 +370,8 @@ export function useSettings() {
         storage.set('glossary_agent_temperature', f.glossary_agent_temperature);
         storage.set('glossary_agent_top_p', f.glossary_agent_top_p);
         storage.set('glossary_agent_retry', f.glossary_agent_retry);
-        storage.set('glossary_agent_thinking_mode', f.glossary_agent_thinking);
+        storage.set('glossary_agent_reasoning_effort', f.glossary_agent_reasoning_effort);
+        storage.set('glossary_agent_thinking_mode', f.glossary_agent_reasoning_effort === 'none' ? 'disable' : 'enable');
         storage.set('glossary_agent_system_proxy_enable', f.glossary_agent_system_proxy_enable);
         storage.set('glossary_agent_force_json', f.glossary_agent_force_json);
         storage.set('glossary_agent_rpm', f.glossary_agent_rpm || '');
@@ -435,7 +463,19 @@ export function useSettings() {
                 try {
                     const data = JSON.parse(ev.target.result);
                     _importingConfig = true;
-                    if (data.form) Object.assign(form, data.form);
+                    if (data.form) {
+                        Object.assign(form, data.form);
+                        if (!Object.prototype.hasOwnProperty.call(data.form, 'reasoning_effort')) {
+                            form.reasoning_effort = legacyThinkingToReasoning(form.thinking);
+                        } else {
+                            form.reasoning_effort = normalizeReasoningEffort(form.reasoning_effort);
+                        }
+                        if (!Object.prototype.hasOwnProperty.call(data.form, 'glossary_agent_reasoning_effort')) {
+                            form.glossary_agent_reasoning_effort = legacyThinkingToReasoning(form.glossary_agent_thinking);
+                        } else {
+                            form.glossary_agent_reasoning_effort = normalizeReasoningEffort(form.glossary_agent_reasoning_effort);
+                        }
+                    }
                     if (WEB_DISABLED_WORKFLOWS.has(form.workflow_type)) {
                         form.workflow_type = 'markdown_based';
                     }

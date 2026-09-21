@@ -37,37 +37,21 @@
 
         <div class="mb-3">
             <div class="flex items-center mb-1">
-                <label class="text-sm font-medium text-gray-700 dark:text-gray-300">{{ t('thinkingModeLabel') }}</label>
-                <Tooltip :content="t('thinkingModeTooltip')">
+                <label for="translator-reasoning-effort" class="text-sm font-medium text-gray-700 dark:text-gray-300">{{ t('reasoningEffortLabel') }}</label>
+                <Tooltip :content="t('reasoningEffortTooltip')">
                     <Heroicon name="QuestionMarkCircleIcon" class="w-4 h-4 ml-2 text-gray-400 cursor-help" />
                 </Tooltip>
             </div>
-            <div class="flex rounded overflow-hidden border border-gray-300 dark:border-gray-600" role="group">
-                <button type="button"
-                        class="flex-1 px-3 py-1.5 text-sm transition-colors"
-                        :class="form.thinking === 'enable'
-                            ? 'bg-primary text-white'
-                            : 'bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-600'"
-                        @click="form.thinking = 'enable'; saveSetting('translator_thinking_mode', 'enable')">
-                    {{ t('thinkingModeEnable') }}
-                </button>
-                <button type="button"
-                        class="flex-1 px-3 py-1.5 text-sm border-x border-gray-300 dark:border-gray-600 transition-colors"
-                        :class="form.thinking === 'disable'
-                            ? 'bg-primary text-white'
-                            : 'bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-600'"
-                        @click="form.thinking = 'disable'; saveSetting('translator_thinking_mode', 'disable')">
-                    {{ t('thinkingModeDisable') }}
-                </button>
-                <button type="button"
-                        class="flex-1 px-3 py-1.5 text-sm transition-colors"
-                        :class="form.thinking === 'default'
-                            ? 'bg-primary text-white'
-                            : 'bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-600'"
-                        @click="form.thinking = 'default'; saveSetting('translator_thinking_mode', 'default')">
-                    {{ t('thinkingModeDefault') }}
-                </button>
-            </div>
+            <select id="translator-reasoning-effort"
+                    class="w-full px-3 py-1.5 text-sm border border-gray-300 dark:border-gray-600 rounded bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-primary"
+                    v-model="form.reasoning_effort"
+                    @change="form.thinking = form.reasoning_effort === 'none' ? 'disable' : 'enable'; saveSetting('translator_reasoning_effort', form.reasoning_effort); saveSetting('translator_thinking_mode', form.thinking)">
+                <option value="none">{{ t('reasoningEffortNone') }}</option>
+                <option value="low">{{ t('reasoningEffortLow') }}</option>
+                <option value="medium">{{ t('reasoningEffortMedium') }}</option>
+                <option value="high">{{ t('reasoningEffortHigh') }}</option>
+                <option value="xhigh">{{ t('reasoningEffortXhigh') }}</option>
+            </select>
         </div>
 
         <div v-if="!advancedOnly" class="mb-3">

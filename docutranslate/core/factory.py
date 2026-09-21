@@ -92,6 +92,7 @@ def create_pdf_native_docx_workflow_from_payload(
             "temperature",
             "top_p",
             "thinking",
+            "reasoning_effort",
             "chunk_size",
             "concurrent",
             "insert_mode",
@@ -154,7 +155,7 @@ def create_workflow_from_payload(payload: TranslatePayload, logger: logging.Logg
     if isinstance(payload, MarkdownWorkflowParams):
         translator_args = payload.model_dump(
             include={"skip_translate", "base_url", "api_key", "model_id", "to_lang", "custom_prompt",
-                     "temperature", "top_p", "thinking", "chunk_size", "concurrent", "glossary_dict", "timeout",
+                     "temperature", "top_p", "thinking", "reasoning_effort", "chunk_size", "concurrent", "glossary_dict", "timeout",
                      "retry", "system_proxy_enable", "force_json", "rpm", "tpm", "provider", "extra_body"},
             exclude_none=True,
         )

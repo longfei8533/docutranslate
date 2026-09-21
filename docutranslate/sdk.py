@@ -11,13 +11,14 @@ from typing import Optional, Literal, Dict, Any, List, Union
 from pydantic import TypeAdapter
 
 from docutranslate.agents.agent import ThinkingMode
+from docutranslate.agents.thinking.thinking_factory import ReasoningEffort
 from docutranslate.agents.provider import ProviderType
 
 from docutranslate.core.schemas import TranslatePayload, GlossaryAgentConfigPayload, WorkflowType, InsertMode
 from docutranslate.core.factory import create_workflow_from_payload
 from docutranslate.translator import default_params
 from docutranslate.global_values.conditional_import import DOCLING_EXIST
-from docutranslate.config import TO_LANG
+from docutranslate.config import TO_LANG, ENV_SET
 
 # --- 映射配置 ---
 # 格式说明: {workflow_type: {save_type: (method_name, default_suffix)}}
@@ -163,6 +164,7 @@ class Client:
             timeout: int = default_params["timeout"],
             retry: int = default_params["retry"],
             thinking: ThinkingMode = default_params["thinking"],
+            reasoning_effort: Optional[ReasoningEffort] = None,
             system_proxy_enable: bool = default_params["system_proxy_enable"],
             convert_engine: Literal["identity", "mineru", "docling", "mineru_deploy"] = "identity",
             mineru_token: str = "",
@@ -178,7 +180,7 @@ class Client:
         self.defaults = {
             "api_key": api_key, "base_url": base_url, "model_id": model_id,
             "to_lang": to_lang, "concurrent": concurrent, "timeout": timeout,
-            "retry": retry, "thinking": thinking,
+            "retry": retry, "thinking": thinking, "reasoning_effort": reasoning_effort,
             "system_proxy_enable": system_proxy_enable,
             "convert_engine": convert_engine, "mineru_token": mineru_token,
             "extra_body": extra_body,
@@ -206,6 +208,7 @@ class Client:
             timeout: Optional[int] = None,
             retry: Optional[int] = None,
             thinking: Optional[ThinkingMode] = None,
+            reasoning_effort: Optional[ReasoningEffort] = None,
             custom_prompt: Optional[str] = None,
             system_proxy_enable: Optional[bool] = None,
             force_json: Optional[bool] = None,
@@ -283,6 +286,7 @@ class Client:
             timeout: Optional[int] = None,
             retry: Optional[int] = None,
             thinking: Optional[ThinkingMode] = None,
+            reasoning_effort: Optional[ReasoningEffort] = None,
             custom_prompt: Optional[str] = None,
             system_proxy_enable: Optional[bool] = None,
             force_json: Optional[bool] = None,
@@ -342,6 +346,7 @@ class Client:
         :param skip_translate: 若为 True，仅进行解析/OCR，不调用 LLM 翻译。
         :param concurrent: LLM 请求并发数。
         :param json_paths: [Json专用] JsonPath 列表 (如 '$.data.*')。
+        :param reasoning_effort: GPT-5.6 推理强度：none、low、medium、high 或 xhigh；显式设置时优先于 thinking。
         :param translate_regions: [Excel专用] 翻译区域 (如 'Sheet1!A1:B10')。
         :param insert_mode: [Docx/Xlsx/Txt] 译文插入模式 (replace, append, prepend)。
         :param convert_engine: [PDF/OCR] 解析引擎 (mineru, docling)。
@@ -362,6 +367,18 @@ class Client:
 
         # 2. 参数层级合并
         final_params = {**default_params, **self.defaults, **call_params}
+        # 旧 SDK 调用只传 thinking 时，不让 default_params 中的兼容默认值
+        # `reasoning_effort=none` 抢先覆盖旧语义；显式的新参数或正式环境变量仍优先。
+        has_explicit_reasoning_effort = (
+            "reasoning_effort" in call_params or "reasoning_effort" in self.defaults
+        )
+        legacy_thinking = call_params.get("thinking", self.defaults.get("thinking"))
+        if (
+            not has_explicit_reasoning_effort
+            and legacy_thinking in ("enable", "disable")
+            and not ENV_SET.get("reasoning_effort")
+        ):
+            final_params.pop("reasoning_effort", None)
 
         # 3. 文件校验
         path_obj = Path(file_path)

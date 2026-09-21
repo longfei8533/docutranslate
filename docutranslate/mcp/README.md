@@ -188,6 +188,7 @@ Submit a file for translation in async mode, returns task_id immediately without
 - `base_url`: AI platform base URL (overrides client config)
 - `model_id`: Model ID (overrides client config)
 - `to_lang`: Target language (overrides client config)
+- `reasoning_effort`: GPT-5.6 reasoning strength: `none`, `low`, `medium`, `high`, or `xhigh`
 - `workflow_type`: Workflow type
 - `convert_engine`: PDF conversion engine
 - `mineru_token`: MinerU API Token
@@ -274,6 +275,7 @@ Configure LLM settings. If already configured via environment variables, this to
 - `base_url`: AI platform base URL
 - `model_id`: Model ID
 - `to_lang`: Target language (default: Chinese)
+- `reasoning_effort`: GPT-5.6 reasoning strength: `none`, `low`, `medium`, `high`, or `xhigh`
 - `concurrent`: Concurrent requests (default: 10)
 - `convert_engine`: PDF conversion engine
 - `mineru_token`: MinerU API Token
@@ -546,6 +548,7 @@ docutranslate -i --with-mcp
 - `base_url`: AI 平台基础 URL（覆盖客户端配置）
 - `model_id`: 模型 ID（覆盖客户端配置）
 - `to_lang`: 目标语言（覆盖客户端配置）
+- `reasoning_effort`: GPT-5.6 推理强度：`none`、`low`、`medium`、`high` 或 `xhigh`
 - `workflow_type`: 工作流类型
 - `convert_engine`: PDF 转换引擎
 - `mineru_token`: MinerU API Token
@@ -632,6 +635,7 @@ docutranslate -i --with-mcp
 - `base_url`: AI 平台基础 URL
 - `model_id`: 模型 ID
 - `to_lang`: 目标语言（默认：中文）
+- `reasoning_effort`: GPT-5.6 推理强度：`none`、`low`、`medium`、`high` 或 `xhigh`
 - `concurrent`: 并发请求数（默认：10）
 - `convert_engine`: PDF 转换引擎
 - `mineru_token`: MinerU API Token

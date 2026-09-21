@@ -228,33 +228,17 @@
                 </div>
 
                 <div class="mb-4">
-                    <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{{ t('thinkingModeLabel') }}</label>
-                    <div class="flex rounded overflow-hidden border border-gray-300 dark:border-gray-600">
-                        <button
-                            type="button"
-                            class="flex-1 px-3 py-1.5 text-sm transition-colors"
-                            :class="form.glossary_agent_thinking === 'enable' ? 'bg-primary text-white' : 'bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-600'"
-                            @click="form.glossary_agent_thinking = 'enable'; saveSetting('glossary_agent_thinking_mode', 'enable')"
-                        >
-                            {{ t('thinkingModeEnable') }}
-                        </button>
-                        <button
-                            type="button"
-                            class="flex-1 px-3 py-1.5 text-sm transition-colors border-l border-gray-300 dark:border-gray-600"
-                            :class="form.glossary_agent_thinking === 'disable' ? 'bg-primary text-white' : 'bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-600'"
-                            @click="form.glossary_agent_thinking = 'disable'; saveSetting('glossary_agent_thinking_mode', 'disable')"
-                        >
-                            {{ t('thinkingModeDisable') }}
-                        </button>
-                        <button
-                            type="button"
-                            class="flex-1 px-3 py-1.5 text-sm transition-colors border-l border-gray-300 dark:border-gray-600"
-                            :class="form.glossary_agent_thinking === 'default' ? 'bg-primary text-white' : 'bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-600'"
-                            @click="form.glossary_agent_thinking = 'default'; saveSetting('glossary_agent_thinking_mode', 'default')"
-                        >
-                            {{ t('thinkingModeDefault') }}
-                        </button>
-                    </div>
+                    <label for="glossary-reasoning-effort" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{{ t('reasoningEffortLabel') }}</label>
+                    <select id="glossary-reasoning-effort"
+                            class="w-full px-3 py-1.5 text-sm border border-gray-300 dark:border-gray-600 rounded bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-primary"
+                            v-model="form.glossary_agent_reasoning_effort"
+                            @change="form.glossary_agent_thinking = form.glossary_agent_reasoning_effort === 'none' ? 'disable' : 'enable'; saveSetting('glossary_agent_reasoning_effort', form.glossary_agent_reasoning_effort); saveSetting('glossary_agent_thinking_mode', form.glossary_agent_thinking)">
+                        <option value="none">{{ t('reasoningEffortNone') }}</option>
+                        <option value="low">{{ t('reasoningEffortLow') }}</option>
+                        <option value="medium">{{ t('reasoningEffortMedium') }}</option>
+                        <option value="high">{{ t('reasoningEffortHigh') }}</option>
+                        <option value="xhigh">{{ t('reasoningEffortXhigh') }}</option>
+                    </select>
                 </div>
                 <div class="mb-3">
                     <Toggle
