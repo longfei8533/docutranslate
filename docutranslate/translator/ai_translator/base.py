@@ -105,12 +105,16 @@ class AiTranslator(Translator[T]):
         glossary_stats: Optional[Dict[str, Any]] = None
         translation_stats: Optional[Dict[str, Any]] = None
         review_stats: Optional[Dict[str, Any]] = None
+        terminology_stats: Optional[Dict[str, Any]] = None
 
         if self.glossary_agent:
             glossary_stats = self.glossary_agent.get_full_stats()
 
         if hasattr(self, 'translate_agent') and self.translate_agent:
             translation_stats = self.translate_agent.get_full_stats()
+            terminology_report = getattr(self.translate_agent, "terminology_report", None)
+            if terminology_report is not None:
+                terminology_stats = terminology_report.as_dict()
 
         if hasattr(self, 'review_agent') and self.review_agent:
             review_stats = self.review_agent.get_full_stats()
@@ -122,6 +126,7 @@ class AiTranslator(Translator[T]):
             "glossary": glossary_stats,
             "translation": translation_stats,
             "review": review_stats,
+            "terminology": terminology_stats,
             "total": total_stats
         }
 

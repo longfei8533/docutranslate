@@ -14,6 +14,7 @@ from json_repair import json_repair
 from docutranslate.agents import AgentConfig, Agent
 from docutranslate.agents.agent import PartialAgentResultError, AgentResultError
 from docutranslate.glossary.glossary import Glossary
+from docutranslate.quality.terminology import TerminologyReport, check_terminology
 from docutranslate.agents.translation_review_agent import TranslationReviewAgent
 from docutranslate.utils.json_utils import segments2json_chunks, fix_json_string, parse_json_response
 
@@ -66,6 +67,37 @@ Please return the translated JSON directly without including any additional info
 """
 
 
+def generate_terminology_repair_prompt(
+    segment_id: str,
+    source: str,
+    current_translation: str,
+    required_terms: list[tuple[str, str]],
+    to_lang: str,
+) -> str:
+    requirements = "\n".join(f"- {source_term} => {target_term}" for source_term, target_term in required_terms)
+    return f"""
+The current translation does not follow every required glossary mapping. Revise only this segment.
+Keep the meaning, numbers, formatting markers, and target language ({to_lang}) unchanged except where needed.
+Every required target term below must appear in the revised translation.
+
+Required glossary mappings:
+{requirements}
+
+Current translation:
+<current_translation>
+{current_translation}
+</current_translation>
+
+<input>
+```json
+{json.dumps({segment_id: source}, ensure_ascii=False)}
+```
+</input>
+
+Return only the translated JSON array using the same segment ID.
+"""
+
+
 def get_original_segments(prompt: str):
     match = re.search(r'<input>\n```json\n(.*)\n```\n</input>', prompt, re.DOTALL)
     if match:
@@ -77,6 +109,13 @@ def get_original_segments(prompt: str):
 def get_target_segments(result: str):
     """使用统一解析函数解析JSON响应"""
     return parse_json_response(result)
+
+
+def get_current_translation(prompt: str) -> str:
+    match = re.search(r'<current_translation>\n(.*?)\n</current_translation>', prompt, re.DOTALL)
+    if not match:
+        raise ValueError("无法从修复提示词中提取当前译文")
+    return match.group(1)
 
 
 @dataclass(kw_only=True)
@@ -100,6 +139,133 @@ class SegmentsTranslateAgent(Agent):
         if config.custom_prompt:
             self.system_prompt += "\n# **Important rules or background** \n" + self.custom_prompt + '\nEND\n'
         self.glossary_dict = config.glossary_dict
+        self.terminology_report: TerminologyReport | None = None
+        self._prior_phase_stats: list[dict] = []
+        self._last_repaired_segment_ids: tuple[str, ...] = ()
+        self._fallback_segment_ids: set[str] = set()
+        self._confirmed_unchanged_segment_ids: set[str] = set()
+        self._segment_state_lock = Lock()
+
+    def _begin_translation(self) -> None:
+        self._prior_phase_stats = []
+        self._last_repaired_segment_ids = ()
+        with self._segment_state_lock:
+            self._fallback_segment_ids.clear()
+            self._confirmed_unchanged_segment_ids.clear()
+
+    def _record_current_phase_stats(self) -> None:
+        self._prior_phase_stats.append(super().get_full_stats())
+
+    @staticmethod
+    def _is_chinese_target(to_lang: str) -> bool:
+        normalized = re.sub(r"[\s_-]+", "", to_lang).casefold()
+        return normalized in {
+            "中文", "汉语", "漢語", "简体中文", "簡體中文", "繁体中文", "繁體中文",
+            "chinese", "simplifiedchinese", "traditionalchinese", "zh", "zhcn", "zhtw",
+        }
+
+    def _unchanged_english_segment_ids(
+        self,
+        originals: list[str],
+        translated: list[str],
+        candidate_ids: set[str] | None = None,
+    ) -> list[str]:
+        if not self._is_chinese_target(self.to_lang):
+            return []
+        unchanged: list[str] = []
+        for index, (source, target) in enumerate(zip(originals, translated)):
+            if candidate_ids is not None and str(index) not in candidate_ids:
+                continue
+            source_text = str(source).strip()
+            if source_text != str(target).strip() or re.search(r"[\u3400-\u9fff]", source_text):
+                continue
+            if len(re.findall(r"[A-Za-z]+(?:[-'][A-Za-z]+)*", source_text)) >= 8:
+                unchanged.append(str(index))
+        return unchanged
+
+    def _recover_unchanged_segments(self, originals: list[str], translated: list[str]) -> list[str]:
+        with self._segment_state_lock:
+            fallback_ids = set(self._fallback_segment_ids)
+        segment_ids = self._unchanged_english_segment_ids(originals, translated, fallback_ids)
+        if not segment_ids:
+            return translated
+        self._record_current_phase_stats()
+        prompts = [
+            generate_prompt(json.dumps({segment_id: originals[int(segment_id)]}, ensure_ascii=False), self.to_lang)
+            for segment_id in segment_ids
+        ]
+        recovered_chunks = super().send_prompts(
+            prompts=prompts,
+            json_format=self.force_json,
+            pre_send_handler=self._pre_send_handler,
+            result_handler=self._targeted_retry_result_handler,
+            error_result_handler=self._error_result_handler,
+        )
+        recovered = list(translated)
+        for segment_id, chunk in zip(segment_ids, recovered_chunks):
+            if isinstance(chunk, dict) and segment_id in chunk:
+                recovered[int(segment_id)] = str(chunk[segment_id])
+        with self._segment_state_lock:
+            confirmed_unchanged = set(self._confirmed_unchanged_segment_ids)
+        unresolved = [
+            segment_id for segment_id in segment_ids
+            if recovered[int(segment_id)].strip() == originals[int(segment_id)].strip()
+            and segment_id not in confirmed_unchanged
+        ]
+        if unresolved:
+            raise AgentResultError(f"{len(unresolved)} 个片段在定向重试后仍与原文相同")
+        changed = tuple(
+            segment_id for segment_id in segment_ids
+            if recovered[int(segment_id)] != translated[int(segment_id)]
+        )
+        self._last_repaired_segment_ids = tuple(dict.fromkeys(
+            (*self._last_repaired_segment_ids, *changed)
+        ))
+        return recovered
+
+    async def _recover_unchanged_segments_async(
+        self,
+        originals: list[str],
+        translated: list[str],
+    ) -> list[str]:
+        with self._segment_state_lock:
+            fallback_ids = set(self._fallback_segment_ids)
+        segment_ids = self._unchanged_english_segment_ids(originals, translated, fallback_ids)
+        if not segment_ids:
+            return translated
+        self._record_current_phase_stats()
+        prompts = [
+            generate_prompt(json.dumps({segment_id: originals[int(segment_id)]}, ensure_ascii=False), self.to_lang)
+            for segment_id in segment_ids
+        ]
+        recovered_chunks = await super().send_prompts_async(
+            prompts=prompts,
+            force_json=self.force_json,
+            pre_send_handler=self._pre_send_handler,
+            result_handler=self._targeted_retry_result_handler,
+            error_result_handler=self._error_result_handler,
+        )
+        recovered = list(translated)
+        for segment_id, chunk in zip(segment_ids, recovered_chunks):
+            if isinstance(chunk, dict) and segment_id in chunk:
+                recovered[int(segment_id)] = str(chunk[segment_id])
+        with self._segment_state_lock:
+            confirmed_unchanged = set(self._confirmed_unchanged_segment_ids)
+        unresolved = [
+            segment_id for segment_id in segment_ids
+            if recovered[int(segment_id)].strip() == originals[int(segment_id)].strip()
+            and segment_id not in confirmed_unchanged
+        ]
+        if unresolved:
+            raise AgentResultError(f"{len(unresolved)} 个片段在定向重试后仍与原文相同")
+        changed = tuple(
+            segment_id for segment_id in segment_ids
+            if recovered[int(segment_id)] != translated[int(segment_id)]
+        )
+        self._last_repaired_segment_ids = tuple(dict.fromkeys(
+            (*self._last_repaired_segment_ids, *changed)
+        ))
+        return recovered
 
     def _pre_send_handler(self, system_prompt, prompt):
         if self.glossary_dict:
@@ -256,7 +422,10 @@ class SegmentsTranslateAgent(Agent):
                 for key in common_keys:
                     final_chunk[key] = str(result_dict[key])
                 for key in missing_keys:
-                    final_chunk[key] = str(original_chunk[key])
+                    try:
+                        final_chunk[key] = get_current_translation(origin_prompt)
+                    except ValueError:
+                        final_chunk[key] = str(original_chunk[key])
 
                 # 如果所有ID都匹配了，直接返回
                 if not missing_keys and not extra_keys:
@@ -264,6 +433,9 @@ class SegmentsTranslateAgent(Agent):
 
                 # 如果有缺失的ID，抛出部分结果异常
                 if missing_keys:
+                    if "<current_translation>" not in origin_prompt:
+                        with self._segment_state_lock:
+                            self._fallback_segment_ids.update(str(key) for key in missing_keys)
                     logger.warning(f"缺失的ID: {missing_keys}")
                     raise PartialAgentResultError("ID不匹配，触发重试", partial_result=final_chunk, append_prompt=f"\nBe careful not to omit any IDs from the input; do not combine sentences when translating.\n")
 
@@ -294,13 +466,204 @@ class SegmentsTranslateAgent(Agent):
             # 此处逻辑保留，作为最终的兜底方案
             for key, value in original_chunk.items():
                 original_chunk[key] = f"{value}"
+            with self._segment_state_lock:
+                self._fallback_segment_ids.update(str(key) for key in original_chunk)
             return original_chunk
         except (RuntimeError, JSONDecodeError):
             logger.error(f"原始prompt也不是有效的json格式: {original_segments}")
             # 如果原始prompt本身也无效，返回一个清晰的错误对象
             return {"error": f"{original_segments}"}
 
+    def _targeted_retry_result_handler(self, result: str, origin_prompt: str, logger: Logger):
+        """Accept an explicitly returned unchanged value while still rejecting fallback source text."""
+        try:
+            return self._result_handler(result, origin_prompt, logger)
+        except AgentResultError as exc:
+            if "翻译结果与原文完全相同" not in str(exc):
+                raise
+            original = json_repair.loads(get_original_segments(origin_prompt))
+            parsed = get_target_segments(result)
+            if isinstance(parsed, list):
+                parsed = {
+                    str(item["id"]): str(item["t"])
+                    for item in parsed
+                    if isinstance(item, dict) and "id" in item and "t" in item
+                }
+            elif isinstance(parsed, dict):
+                parsed = {str(key): str(value) for key, value in parsed.items()}
+            else:
+                raise
+            normalized_original = {str(key): str(value) for key, value in original.items()}
+            if parsed != normalized_original:
+                raise
+            with self._segment_state_lock:
+                self._confirmed_unchanged_segment_ids.update(parsed)
+            return parsed
+
+    def _remap_fallback_ids_to_original_segments(
+        self,
+        original_count: int,
+        expanded_count: int,
+        merged_indices_list: list[tuple[int, int]],
+    ) -> None:
+        mapping = self._expanded_to_original_map(
+            original_count, expanded_count, merged_indices_list
+        )
+        with self._segment_state_lock:
+            self._fallback_segment_ids = {
+                str(mapping[segment_id])
+                for segment_id in self._fallback_segment_ids
+                if segment_id in mapping
+            }
+
+    def _required_terms_for_segment(self, report: TerminologyReport, segment_id: str) -> list[tuple[str, str]]:
+        return [
+            (finding.source_term, finding.expected_target)
+            for finding in report.findings
+            if finding.status != "matched" and segment_id in finding.segment_ids
+        ]
+
+    @staticmethod
+    def _repair_satisfies_required_terms(
+        segment_id: str,
+        source: str,
+        candidate: str,
+        required_terms: list[tuple[str, str]],
+    ) -> bool:
+        report = check_terminology(
+            [(segment_id, source, candidate)],
+            dict(required_terms),
+        )
+        return report.applicable_terms > 0 and not report.unresolved_segment_ids
+
+    def _check_and_repair(self, originals: list[str], translated: list[str]) -> list[str]:
+        pairs = [(str(index), source, translated[index]) for index, source in enumerate(originals)]
+        initial = check_terminology(pairs, self.glossary_dict)
+        self.terminology_report = initial
+        if not initial.unresolved_segment_ids:
+            return translated
+        self._record_current_phase_stats()
+        prompts = []
+        segment_ids = []
+        for segment_id in initial.unresolved_segment_ids:
+            index = int(segment_id)
+            prompts.append(generate_terminology_repair_prompt(
+                segment_id,
+                originals[index],
+                translated[index],
+                self._required_terms_for_segment(initial, segment_id),
+                self.to_lang,
+            ))
+            segment_ids.append(segment_id)
+        repaired_chunks = super().send_prompts(
+            prompts=prompts,
+            json_format=self.force_json,
+            pre_send_handler=self._pre_send_handler,
+            result_handler=self._result_handler,
+            error_result_handler=self._repair_error_result_handler,
+        )
+        repaired = list(translated)
+        for segment_id, chunk in zip(segment_ids, repaired_chunks):
+            index = int(segment_id)
+            if isinstance(chunk, dict) and segment_id in chunk:
+                candidate = str(chunk[segment_id])
+                if self._repair_satisfies_required_terms(
+                    segment_id,
+                    originals[index],
+                    candidate,
+                    self._required_terms_for_segment(initial, segment_id),
+                ):
+                    repaired[index] = candidate
+        terminology_repaired_ids = tuple(
+            segment_id for segment_id in segment_ids
+            if repaired[int(segment_id)] != translated[int(segment_id)]
+        )
+        self._last_repaired_segment_ids = tuple(dict.fromkeys(
+            (*self._last_repaired_segment_ids, *terminology_repaired_ids)
+        ))
+        final = check_terminology(
+            [(str(index), source, repaired[index]) for index, source in enumerate(originals)],
+            self.glossary_dict,
+        )
+        self.terminology_report = initial.with_repair_result(final)
+        return repaired
+
+    async def _check_and_repair_async(self, originals: list[str], translated: list[str]) -> list[str]:
+        pairs = [(str(index), source, translated[index]) for index, source in enumerate(originals)]
+        initial = check_terminology(pairs, self.glossary_dict)
+        self.terminology_report = initial
+        if not initial.unresolved_segment_ids:
+            return translated
+        self._record_current_phase_stats()
+        prompts = []
+        segment_ids = []
+        for segment_id in initial.unresolved_segment_ids:
+            index = int(segment_id)
+            prompts.append(generate_terminology_repair_prompt(
+                segment_id,
+                originals[index],
+                translated[index],
+                self._required_terms_for_segment(initial, segment_id),
+                self.to_lang,
+            ))
+            segment_ids.append(segment_id)
+        repaired_chunks = await super().send_prompts_async(
+            prompts=prompts,
+            force_json=self.force_json,
+            pre_send_handler=self._pre_send_handler,
+            result_handler=self._result_handler,
+            error_result_handler=self._repair_error_result_handler,
+        )
+        repaired = list(translated)
+        for segment_id, chunk in zip(segment_ids, repaired_chunks):
+            index = int(segment_id)
+            if isinstance(chunk, dict) and segment_id in chunk:
+                candidate = str(chunk[segment_id])
+                if self._repair_satisfies_required_terms(
+                    segment_id,
+                    originals[index],
+                    candidate,
+                    self._required_terms_for_segment(initial, segment_id),
+                ):
+                    repaired[index] = candidate
+        terminology_repaired_ids = tuple(
+            segment_id for segment_id in segment_ids
+            if repaired[int(segment_id)] != translated[int(segment_id)]
+        )
+        self._last_repaired_segment_ids = tuple(dict.fromkeys(
+            (*self._last_repaired_segment_ids, *terminology_repaired_ids)
+        ))
+        final = check_terminology(
+            [(str(index), source, repaired[index]) for index, source in enumerate(originals)],
+            self.glossary_dict,
+        )
+        self.terminology_report = initial.with_repair_result(final)
+        return repaired
+
+    def _repair_error_result_handler(self, origin_prompt: str, logger: Logger) -> dict[str, str]:
+        """A failed repair must preserve the usable first-pass translation."""
+        try:
+            original = json_repair.loads(get_original_segments(origin_prompt))
+            segment_id = next(iter(original))
+            return {str(segment_id): get_current_translation(origin_prompt)}
+        except (StopIteration, TypeError, ValueError, RuntimeError, JSONDecodeError) as exc:
+            logger.error(f"无法恢复修复前译文: {exc!r}")
+            return {}
+
+    def get_full_stats(self) -> dict:
+        current = super().get_full_stats()
+        if not self._prior_phase_stats:
+            return current
+        combined = dict(current)
+        for field in ("input_tokens", "cached_tokens", "output_tokens", "reasoning_tokens", "total_tokens", "request_count", "unresolved_errors"):
+            combined[field] = sum(int(stats.get(field, 0) or 0) for stats in self._prior_phase_stats) + int(current.get(field, 0) or 0)
+        combined["unresolved_error_rate"] = (
+            combined["unresolved_errors"] / combined["request_count"] if combined["request_count"] else 0
+        )
+        return combined
+
     def send_segments(self, segments: list[str], chunk_size: int) -> list[str]:
+        self._begin_translation()
         indexed_originals, chunks, merged_indices_list = segments2json_chunks(segments, chunk_size)
         prompts = [generate_prompt(json.dumps(chunk, ensure_ascii=False, indent=0), self.to_lang) for chunk in chunks]
         translated_chunks = super().send_prompts(prompts=prompts, json_format=self.force_json,
@@ -335,7 +698,11 @@ class SegmentsTranslateAgent(Agent):
             last_end = end
 
         result.extend(ls[last_end:])
-        return result
+        self._remap_fallback_ids_to_original_segments(
+            len(segments), len(indexed_originals), merged_indices_list
+        )
+        result = self._recover_unchanged_segments(segments, result)
+        return self._check_and_repair(segments, result)
 
     @staticmethod
     def _expanded_to_original_map(
@@ -381,6 +748,7 @@ class SegmentsTranslateAgent(Agent):
         chunk_size: int,
         review_agent: TranslationReviewAgent,
     ) -> tuple[list[str], dict[int, str]]:
+        self._begin_translation()
         indexed_originals, chunks, merged_indices_list = segments2json_chunks(segments, chunk_size)
         prompts = [generate_prompt(json.dumps(chunk, ensure_ascii=False, indent=0), self.to_lang) for chunk in chunks]
         review_agent.prepare_batch(len(chunks), self.rate_limiter)
@@ -406,12 +774,29 @@ class SegmentsTranslateAgent(Agent):
             completion_callback=review_completed_chunk,
         )
         translated = self._rebuild_segments(indexed_originals, translated_chunks, merged_indices_list)
+        self._remap_fallback_ids_to_original_segments(
+            len(segments), len(indexed_originals), merged_indices_list
+        )
         reviews = self._merge_review_comments(
             review_chunks, len(segments), len(indexed_originals), merged_indices_list
         )
-        return translated, reviews
+        translated = self._recover_unchanged_segments(segments, translated)
+        repaired = self._check_and_repair(segments, translated)
+        if self._last_repaired_segment_ids:
+            refreshed = review_agent.rereview_pairs(
+                [(segment_id, segments[int(segment_id)], repaired[int(segment_id)])
+                 for segment_id in self._last_repaired_segment_ids]
+            )
+            for segment_id in self._last_repaired_segment_ids:
+                index = int(segment_id)
+                if refreshed.get(segment_id):
+                    reviews[index] = refreshed[segment_id]
+                else:
+                    reviews.pop(index, None)
+        return repaired, reviews
 
     async def send_segments_async(self, segments: list[str], chunk_size: int) -> list[str]:
+        self._begin_translation()
         indexed_originals, chunks, merged_indices_list = await asyncio.to_thread(segments2json_chunks, segments,
                                                                                  chunk_size)
         prompts = [generate_prompt(json.dumps(chunk, ensure_ascii=False, indent=0), self.to_lang) for chunk in chunks]
@@ -448,7 +833,11 @@ class SegmentsTranslateAgent(Agent):
             last_end = end
 
         result.extend(ls[last_end:])
-        return result
+        self._remap_fallback_ids_to_original_segments(
+            len(segments), len(indexed_originals), merged_indices_list
+        )
+        result = await self._recover_unchanged_segments_async(segments, result)
+        return await self._check_and_repair_async(segments, result)
 
     @staticmethod
     def _rebuild_segments(
@@ -480,6 +869,7 @@ class SegmentsTranslateAgent(Agent):
         chunk_size: int,
         review_agent: TranslationReviewAgent,
     ) -> tuple[list[str], dict[int, str]]:
+        self._begin_translation()
         indexed_originals, chunks, merged_indices_list = await asyncio.to_thread(
             segments2json_chunks, segments, chunk_size
         )
@@ -506,10 +896,26 @@ class SegmentsTranslateAgent(Agent):
             completion_callback=review_completed_chunk,
         )
         translated = self._rebuild_segments(indexed_originals, translated_chunks, merged_indices_list)
+        self._remap_fallback_ids_to_original_segments(
+            len(segments), len(indexed_originals), merged_indices_list
+        )
         reviews = self._merge_review_comments(
             review_chunks, len(segments), len(indexed_originals), merged_indices_list
         )
-        return translated, reviews
+        translated = await self._recover_unchanged_segments_async(segments, translated)
+        repaired = await self._check_and_repair_async(segments, translated)
+        if self._last_repaired_segment_ids:
+            refreshed = await review_agent.rereview_pairs_async(
+                [(segment_id, segments[int(segment_id)], repaired[int(segment_id)])
+                 for segment_id in self._last_repaired_segment_ids]
+            )
+            for segment_id in self._last_repaired_segment_ids:
+                index = int(segment_id)
+                if refreshed.get(segment_id):
+                    reviews[index] = refreshed[segment_id]
+                else:
+                    reviews.pop(index, None)
+        return repaired, reviews
 
     def update_glossary_dict(self, update_dict: dict | None):
         if self.glossary_dict is None:
